@@ -20,6 +20,6 @@ ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and 
 ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), and should be firmware-compatible with Panda firmware as a black panda. conversely, ocelot firmware should also work on a panda, which is helpful for development.
 
 ## Documentation
-full documentation and examples are available at the [RetroPilot Wiki](https://wiki.retropilot.org/wiki/v/hardware/):
+full documentation and examples are available at the [RetroPilot Wiki](https://wiki.retropilot.org/index/hardware/ocelot):
 
-https://wiki.retropilot.org/wiki/v/hardware/
+https://wiki.retropilot.org/index/hardware/ocelot
