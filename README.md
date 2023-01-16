@@ -9,7 +9,7 @@ maybe you want to install an iBooster and control it via RetroPilot or some fork
 
 maybe you retrofit a new, LKAS-enabled PSCM in your car and want a way to translate messages so the car thinks you still have the old one in.
 
-maybe you just want to gateway your Driving Support Unit and a few flip bits to enable full-speed cruise control.
+maybe you just want to gateway your Driving Support Unit and flip a few bits to enable full-speed cruise control.
 
 ocelot has you covered.
 
@@ -17,7 +17,7 @@ ocelot has you covered.
 ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and schematic are located in the `hardware` folder. 
 
 ## Firmware
-ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), and should be firmware-compatible with Panda firmware as a black panda. conversely, ocelot firmware should also work on a panda, which is helpful for development.
+ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), and it should be firmware-compatible with Panda firmware as a black panda. conversely, ocelot firmware should also work on a panda, which is helpful for development.
 
 ## Documentation
 full documentation and examples are available at the [RetroPilot Wiki](https://wiki.retropilot.org/index/hardware/ocelot):
