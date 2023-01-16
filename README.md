@@ -7,7 +7,7 @@ it allows users to easily retrofit parts from other cars, selectively gateway EC
 
 maybe you want to install an iBooster and control it via RetroPilot or some fork of openpilot that supports ocelot.
 
-maybe you retrofit a new, LKAS-enabled PSCM in your car and want a way to translate traffic so the car thinks you still have the old one in.
+maybe you retrofit a new, LKAS-enabled PSCM in your car and want a way to translate messages so the car thinks you still have the old one in.
 
 maybe you just want to gateway your Driving Support Unit and a few flip bits to enable full-speed cruise control.
 
