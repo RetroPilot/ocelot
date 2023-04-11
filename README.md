@@ -14,7 +14,8 @@ maybe you just want to gateway your Driving Support Unit and flip a few bits to 
 ocelot has you covered.
 
 ## Hardware
-ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and schematic are located in the `hardware` folder. 
+ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and schematic are located in the `hardware` folder.
+The completed hardware is available to purchase on the RetroPilot store. https://shop.retropilot.org/product-category/hardware/ocelot/
 
 ## Firmware
 ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), and it should be firmware-compatible with Panda firmware as a black panda. conversely, ocelot firmware should also work on a panda, which is helpful for development.
