@@ -30,6 +30,8 @@ elif os.getenv("GATEWAY"):
     MAIN = "smart_dsu/main.c"
   elif os.getenv("EPS_GW"):
     MAIN = "eps_gw/main.c"
+  elif os.getenv("GPIO_EXAMPLE"):
+    MAIN = "gpio_example/main.c"
   PROJECT_FLAGS = [
     "-mcpu=cortex-m4",
     "-mhard-float",

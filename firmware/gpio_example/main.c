@@ -20,11 +20,17 @@
 #include "gpio.h"
 #include "crc.h"
 
+#include "drivers/pwm.h"
+
+// addresses
+#define OUTPUT_ADDRESS 0x201
+#define INPUT_ADDRESS 0x200
+
 // uncomment for usb debugging via debug_console.py
-#define EPS_GW_USB
+#define DEBUG_USB
 #define DEBUG
 
-#ifdef EPS_GW_USB
+#ifdef DEBUG_USB
   #include "drivers/uart.h"
   #include "drivers/usb.h"
 #else
@@ -48,9 +54,9 @@ void __initialize_hardware_early(void) {
   early();
 }
 
-#ifdef EPS_GW_USB
+#ifdef DEBUG_USB
 
-#include "eps_gw/can.h"
+#include "gpio_example/can.h"
 
 // ********************* usb debugging *********************
 void debug_ring_callback(uart_ring *ring) {
@@ -181,9 +187,8 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 #endif
 
 // ***************************** can port *****************************
-#define CAN_UPDATE  0x23F //bootloader
+#define CAN_UPDATE  0x341 //bootloader
 #define COUNTER_CYCLE 0xFU
-#define LKA_COUNTER_CYCLE = 0x3FU
 
 void CAN1_TX_IRQ_Handler(void) {
   process_can(0);
@@ -199,49 +204,6 @@ void CAN3_TX_IRQ_Handler(void) {
 }
 
 bool sent;
-
-// Toyota Checksum algorithm
-uint8_t toyota_checksum(int addr, uint8_t *dat, int len){
-  int cksum = 0;
-  for(int ii = 0; ii < (len - 1); ii++){
-    cksum = (cksum + dat[ii]); 
-  }
-  cksum += len;
-  cksum += ((addr >> 8U) & 0xFF); // idh
-  cksum += ((addr) & 0xFF); // idl
-  return cksum & 0xFF;
-}
-
-// OUTPUTS
-//---------------------------------
-#define LKA_INPUT 0x2E4
-uint16_t torque_req = 0;
-uint8_t lka_counter = 0;
-bool lka_req = 0;
-uint8_t lka_checksum = 0;
-
-#define CAN_ID 0x22F
-bool eps_ok = 0;
-
-// INPUTS
-//---------------------------------
-#define CAN_INPUT 0x22E
-uint8_t mode = 0;
-uint16_t rel_input = 0;
-uint16_t pos_input = 0;
-
-#define STEER_TORQUE_SENSOR 0x260
-uint16_t steer_torque_driver = 0;
-uint16_t steer_torque_eps = 0;
-bool steer_override = 0;
-
-#define EPS_STATUS 0x262
-uint8_t lka_state = 0;
-
-// COUNTERS
-uint8_t can1_count_out = 0;
-uint8_t can1_count_in;
-uint8_t can2_count_out = 0;
 
 #define MAX_TIMEOUT 50U
 uint32_t timeout = 0;
@@ -260,6 +222,8 @@ uint8_t state = FAULT_STARTUP;
 const uint8_t crc_poly = 0x1D;  // standard crc8 SAE J1850
 uint8_t crc8_lut_1d[256];
 
+// CAN 1 read function
+// this is where you read in data from CAN 1 and set variables
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) {
     uint16_t address = CAN1->sFIFOMailBox[0].RIR >> 21;
@@ -282,26 +246,17 @@ void CAN1_RX0_IRQ_Handler(void) {
           }
         }
         break;
-      case CAN_INPUT: ;
+      case INPUT_ADDRESS: ;
+        //uint64_t data; //sendESP_private2
+        //uint8_t *dat = (uint8_t *)&data;
         uint8_t dat[6];
         for (int i=0; i<6; i++) {
           dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
         uint8_t index = dat[1] & COUNTER_CYCLE;
         if(dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
-          if (((can1_count_in + 1U) & COUNTER_CYCLE) == index) {
+          if (((0 + 1U) & COUNTER_CYCLE) == index) {
             //if counter and checksum valid accept commands
-            mode = ((dat[1] >> 4U) & 3U);
-            if (mode != 0){
-              lka_req = 1;
-            } else {
-              lka_req = 0;
-            }
-            pos_input = ((dat[3] & 0xFU) << 8U) | dat[2];
-            rel_input = ((dat[5] << 8U) | dat[4]);
-            // TODO: safety? scaling?
-            torque_req = rel_input;
-            can1_count_in++;
           }
           else {
             state = FAULT_COUNTER;
@@ -311,17 +266,7 @@ void CAN1_RX0_IRQ_Handler(void) {
         }
         else {
           state = FAULT_BAD_CHECKSUM;
-          puts("checksum fail 0x22E \n");
-          puts("DATA: ");
-          for(int ii = 0; ii < 6; ii++){
-            puth2(dat[ii]);
-          }
-          puts("\n");
-          puts("expected: ");
-          puth2(lut_checksum(dat, 6, crc8_lut_1d));
-          puts(" got: ");
-          puth2(dat[0]);
-          puts("\n");
+          puts("checksum fail 0x20E \n");
         }
         break;
       default: ;
@@ -331,13 +276,13 @@ void CAN1_RX0_IRQ_Handler(void) {
     // CAN1->RF0R |= CAN_RF0R_RFOM0;
   }
 }
-
 void CAN1_SCE_IRQ_Handler(void) {
   state = FAULT_SCE;
   can_sce(CAN1);
   llcan_clear_send(CAN1);
 }
 
+// CAN 2 read function
 void CAN2_RX0_IRQ_Handler(void) {
   while ((CAN2->RF0R & CAN_RF0R_FMP0) != 0) {
     uint16_t address = CAN2->sFIFOMailBox[0].RIR >> 21;
@@ -352,140 +297,54 @@ void CAN2_RX0_IRQ_Handler(void) {
     can_rx(1);
   }
 }
-
 void CAN2_SCE_IRQ_Handler(void) {
   state = FAULT_SCE;
   can_sce(CAN2);
   llcan_clear_send(CAN2);
 }
 
+// CAN 3 read function
 void CAN3_RX0_IRQ_Handler(void) {
   while ((CAN3->RF0R & CAN_RF0R_FMP0) != 0) {
     uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
     #ifdef DEBUG_CAN
-    puts("CAN3 RX: ");
+    puts("CAN1 RX: ");
     puth(address);
     puts("\n");
+    #else
+    UNUSED(address);
     #endif
-    switch (address) {
-      case STEER_TORQUE_SENSOR: ;
-        uint8_t dat[8];
-        for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-        }
-        if(dat[7] == toyota_checksum(address, dat, 8)) {
-          steer_override = dat[0] & 1U;
-          steer_torque_driver = (dat[1] << 8U) | dat[2];
-          steer_torque_eps = (dat[5] << 8U) | dat[6];
-        }
-        else {
-          state = FAULT_BAD_CHECKSUM;
-        }
-        break;
-      case EPS_STATUS: ;
-        uint8_t dat2[5];
-        for (int i=0; i<5; i++) {
-          dat2[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-        }
-        if(dat2[4] == toyota_checksum(address, dat2, 5)) {
-          lka_state = dat2[3] >> 1U;
-        }
-        else {
-          state = FAULT_BAD_CHECKSUM;
-        }
-        break;
-      default: ;
-    }
     // next
     can_rx(2);
   }
 }
-
 void CAN3_SCE_IRQ_Handler(void) {
   state = FAULT_SCE;
   can_sce(CAN3);
   llcan_clear_send(CAN3);
 }
-
-int to_signed(int d, int bits) {
-  int d_signed = d;
-  if (d >= (1 << MAX((bits - 1), 0))) {
-    d_signed = d - (1 << MAX(bits, 0));
-  }
-  return d_signed;
-}
-
+uint8_t gpio = 1;
+// timer 3 interrupt. Use this function to perform tasks at specific intervals. see main() for details
 void TIM3_IRQ_Handler(void) {
-  // cmain loop for sending 100hz messages
 
-  if ((CAN2->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[8]; // LKA_INPUT
-    dat[0] = (1 << 7U) | (can2_count_out << 1U) | lka_req;
-    dat[1] = (torque_req >> 8U);
-    dat[2] = (torque_req & 0xFF);
-    dat[3] = 0x0;
-    dat[4] = toyota_checksum(LKA_INPUT, dat, 5);
+  set_gpio_output(GPIOB, 12, gpio);
+  gpio = !gpio;
+
+  // send to EON
+  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
+    uint8_t dat[5];
+    dat[4] = 0;
+    dat[3] = 0;
+    dat[2] = 0;
+    dat[1] = 0;
+    dat[0] = lut_checksum(dat, 5, crc8_lut_1d);
 
     CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     to_send.RDHR = dat[4];
     to_send.RDTR = 5;
-    to_send.RIR = (LKA_INPUT << 21) | 1U;
-    can_send(&to_send, 2, false);
-
-  }
-  
-  // 0x1C4: 0x05 0xea 0x1b 0x08 0x00 0x00 0xc0 0x9f
-  if ((CAN2->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[8];
-    dat[0] = 0x05;
-    dat[1] = 0xea;
-    dat[2] = 0x1b;
-    dat[3] = 0x08;
-    dat[4] = 0x00;
-    dat[5] = 0x00;
-    dat[6] = 0xc0;
-    dat[7] = toyota_checksum(0x1C4, dat, 5);
-
-    CAN_FIFOMailBox_TypeDef to_send;
-    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
-    to_send.RDTR = 8;
-    to_send.RIR = (0x1C4 << 21) | 1U;
-    can_send(&to_send, 2, false);
-
-  } 
-  
-  else {
-    // old can packet hasn't sent!
-    state = FAULT_SEND;
-    #ifdef DEBUG_CAN
-      puts("CAN2 MISS1\n");
-    #endif
-  }
-
-  //send to EON
-  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[7];
-
-    dat[6] = (steer_torque_eps & 0xFF);
-    dat[5] = (steer_torque_eps >> 8U);
-    dat[4] = (steer_torque_driver & 0xFF);
-    dat[3] = (steer_torque_driver >> 8U);
-    dat[2] = eps_ok;
-    dat[1] = ((state & 0xFU) << 4) | can1_count_out;
-    dat[0] = lut_checksum(dat, 7, crc8_lut_1d);
-
-    CAN_FIFOMailBox_TypeDef to_send;
-    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16);
-    to_send.RDTR = 7;
-    to_send.RIR = (CAN_ID << 21) | 1U;
+    to_send.RIR = (OUTPUT_ADDRESS << 21) | 1U;
     can_send(&to_send, 0, false);
-
-    can1_count_out++;
-    can1_count_out &= COUNTER_CYCLE;
-
   }
   else {
     // old can packet hasn't sent!
@@ -494,34 +353,18 @@ void TIM3_IRQ_Handler(void) {
       puts("CAN1 MISS1\n");
     #endif
   }
-  // blink the LED
 
+  // reset the timer
   TIM3->SR = 0;
 
-  // up timeout for gas set
-  if (timeout == MAX_TIMEOUT) {
-    state = FAULT_TIMEOUT;
-    torque_req = 0;
-    mode = 0;
-  } else {
-    timeout += 1U;
-  }
-
-  #ifdef DEBUG
-  puts("MODE: ");
-  puth(mode << 1U);
-  puts(" EPS: ");
-  puts("\n");
-  #endif
 }
 
 // ***************************** main code *****************************
 
-
-void ibst(void) {
+// This function is the main application. It is run in a while loop from main() and is interrupted by those specified in main().
+void loop(void) {
   // read/write
   watchdog_feed();
-
 }
 
 int main(void) {
@@ -552,7 +395,7 @@ int main(void) {
   // init board
   current_board->init();
   // enable USB
-  #ifdef EPS_GW_USB
+  #ifdef DEBUG_USB
   USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOVAL;
   USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOEN;
   usb_init();
@@ -580,24 +423,63 @@ int main(void) {
   UNUSED(ret);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
-
-  // 48mhz / 65536 ~= 732
-  timer_init(TIM3, 7);
+  
+  // ############### TIMER INTERRUPTS ###############
+  // clock / (psc+1)*(arr) = TIM3_IRQ interrupt frequency
+  // in this case 48,000,000 / ((7+1)*(59999+1)) = 100Hz
+  uint8_t psc = 7;
+  uint16_t arr = 59999;
+  register_set(&(TIM3->PSC), (psc), 0xFFFFU);
+  register_set(&(TIM3->ARR), (arr), 0xFFFFU);
+  register_set(&(TIM3->DIER), TIM_DIER_UIE, 0x5F5FU);
+  register_set(&(TIM3->CR1), TIM_CR1_CEN, 0x3FU);
+  TIM3->SR = 0;
   NVIC_EnableIRQ(TIM3_IRQn);
 
-  // power on EPS
+  // ##################### GPIO #####################
+  // in this example, we will use PB12 and PB13
+
+  // setup GPIO
   set_gpio_mode(GPIOB, 12, MODE_OUTPUT);
+  set_gpio_mode(GPIOB, 13, MODE_OUTPUT);
   set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 13, OUTPUT_TYPE_PUSH_PULL);
+  // set GPIO state ON
   set_gpio_output(GPIOB, 12, 1);
+  set_gpio_output(GPIOB, 13, 1);
+
+  // ##################### PWM #####################
+  // in this example, we will use GPIOs PA2 and PA3
+  // they map to TIM4_CH3 and TIM5_CH4, respectively.
+
+  // init PWM clock
+  // frequency = clk/(psc+1)*(arr+1)
+  register_set(&(TIM5->PSC), (0), 0xFFFFU);
+  register_set(&(TIM5->CR1), TIM_CR1_CEN, 0x3FU);     // Enable
+
+  // set up alternate functions for PA2 and PA3
+  set_gpio_alternate(GPIOA, 2, GPIO_AF2_TIM5);
+  set_gpio_alternate(GPIOA, 3, GPIO_AF2_TIM5);
+
+  // init the timer
+  pwm_init(TIM5, 3);
+  pwm_init(TIM5, 4);
+
+  // change the reload register value. 2048 gives us 11 bit resolution @ 24kHz
+  register_set(&(TIM5->ARR), (2048-1), 0xFFFFFFFFU);
+  
+  // set PWM to 50% (ARR / 1024)
+  register_set(&(TIM5->CCR3), 512, 0xFFFFU);
+  register_set(&(TIM5->CCR4), 1536, 0xFFFFU);
 
   watchdog_init();
 
   puts("**** INTERRUPTS ON ****\n");
   enable_interrupts();
 
-  // main pedal loop
+  // main loop
   while (1) {
-    ibst();
+    loop();
   }
 
   return 0;
