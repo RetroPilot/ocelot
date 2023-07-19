@@ -20,7 +20,7 @@ if the device detects that 0xF10, 0xF11, or 0x343 is not sent, it will timeout f
 
 ## Installation
 
-install the device with bus 1 facing the CAR CAN and bus 3 facing the DSU or radar. ensure bus 3 is terminated by applying a blob of solder to JL3 (on ocelot pro) or the solder bridge next to CAN3 (on ocelot gateway.)
+install the device with bus 1 facing the CAR CAN and bus 3 facing the DSU or radar. ensure bus 3 is terminated by applying a blob of solder to JL2 (on ocelot pro) or the solder bridge next to CAN3 (on ocelot gateway.)
 
 refer to the hardware guide for more info:
 https://wiki.retropilot.org/index/hardware/ocelot/hardware
