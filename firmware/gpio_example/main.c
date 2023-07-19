@@ -28,7 +28,11 @@
 
 // uncomment for usb debugging via debug_console.py
 #define DEBUG_USB
-#define DEBUG
+// #define DEBUG
+// #define DEBUG_CAN
+
+// functions
+#define min(a,b)            (((a) < (b)) ? (a) : (b))
 
 #ifdef DEBUG_USB
   #include "drivers/uart.h"
@@ -207,6 +211,7 @@ bool sent;
 
 #define MAX_TIMEOUT 50U
 uint32_t timeout = 0;
+uint32_t current_index = 0;
 
 #define NO_FAULT 0U
 #define FAULT_BAD_CHECKSUM 1U
@@ -221,6 +226,9 @@ uint8_t state = FAULT_STARTUP;
 
 const uint8_t crc_poly = 0x1D;  // standard crc8 SAE J1850
 uint8_t crc8_lut_1d[256];
+
+uint16_t gas_set_0 = 0;
+uint16_t gas_set_1 = 0;
 
 // CAN 1 read function
 // this is where you read in data from CAN 1 and set variables
@@ -246,19 +254,40 @@ void CAN1_RX0_IRQ_Handler(void) {
           }
         }
         break;
+
       case INPUT_ADDRESS: ;
-        //uint64_t data; //sendESP_private2
-        //uint8_t *dat = (uint8_t *)&data;
         uint8_t dat[6];
         for (int i=0; i<6; i++) {
           dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
-        uint8_t index = dat[1] & COUNTER_CYCLE;
         if(dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
-          if (((0 + 1U) & COUNTER_CYCLE) == index) {
+          uint16_t value_0 = (dat[2] << 8) | dat[1];
+          uint16_t value_1 = (dat[4] << 8) | dat[3];
+          bool enable = ((dat[5] >> 7) & 1U) != 0U;
+          uint8_t index = dat[5] & COUNTER_CYCLE;
+          if (((current_index + 1U) & COUNTER_CYCLE) == index) {
             //if counter and checksum valid accept commands
-          }
-          else {
+            #ifdef DEBUG
+              puts("setting gas ");
+              puth(value_0);
+              puts("\n");
+            #endif
+            if (enable) {
+              gas_set_0 = value_0;
+              gas_set_1 = value_1;
+            } else {
+              // not enabled, everything is 0
+              gas_set_0 = 0;
+              gas_set_1 = 0;
+              // clear the fault state if values are 0
+              if ((value_0 == 0U) && (value_1 == 0U)) {
+                state = NO_FAULT;
+              } else {
+                state = FAULT_INVALID;
+              }
+              }
+              current_index = index;
+          } else {
             state = FAULT_COUNTER;
           }
           state = NO_FAULT;
@@ -269,11 +298,13 @@ void CAN1_RX0_IRQ_Handler(void) {
           puts("checksum fail 0x20E \n");
         }
         break;
-      default: ;
+
+      default: 
+      break;
     }
     can_rx(0);
     // next
-    // CAN1->RF0R |= CAN_RF0R_RFOM0;
+    CAN1->RF0R |= CAN_RF0R_RFOM0;
   }
 }
 void CAN1_SCE_IRQ_Handler(void) {
@@ -298,8 +329,8 @@ void CAN2_RX0_IRQ_Handler(void) {
   }
 }
 void CAN2_SCE_IRQ_Handler(void) {
-  state = FAULT_SCE;
-  can_sce(CAN2);
+  // state = FAULT_SCE;
+  // can_sce(CAN2);
   llcan_clear_send(CAN2);
 }
 
@@ -319,32 +350,39 @@ void CAN3_RX0_IRQ_Handler(void) {
   }
 }
 void CAN3_SCE_IRQ_Handler(void) {
-  state = FAULT_SCE;
-  can_sce(CAN3);
+  // state = FAULT_SCE;
+  // can_sce(CAN3);
   llcan_clear_send(CAN3);
 }
-uint8_t gpio = 1;
+// uint8_t gpio = 1;
 // timer 3 interrupt. Use this function to perform tasks at specific intervals. see main() for details
+uint8_t pkt_idx = 0;
 void TIM3_IRQ_Handler(void) {
-
-  set_gpio_output(GPIOB, 12, gpio);
-  gpio = !gpio;
+  #ifdef DEBUG
+    puth(TIM3->CNT);
+    puts("\n");
+  #endif
+  // set_gpio_output(GPIOB, 12, gpio);
+  // gpio = !gpio;
 
   // send to EON
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[5];
-    dat[4] = 0;
-    dat[3] = 0;
-    dat[2] = 0;
-    dat[1] = 0;
-    dat[0] = lut_checksum(dat, 5, crc8_lut_1d);
+    uint8_t dat[6];
+    dat[5] = ((state & 0xFU) << 4) | pkt_idx;
+    dat[4] = (gas_set_1 >> 8) & 0xFF;
+    dat[3] = (gas_set_1 >> 0) & 0xFF;
+    dat[2] = (gas_set_0 >> 8) & 0xFF;
+    dat[1] = (gas_set_0 >> 0) & 0xFF;
+    dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
 
     CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4];
-    to_send.RDTR = 5;
+    to_send.RDHR = dat[4] | (dat[5] << 8);
+    to_send.RDTR = 6;
     to_send.RIR = (OUTPUT_ADDRESS << 21) | 1U;
     can_send(&to_send, 0, false);
+    pkt_idx++;
+    pkt_idx &= COUNTER_CYCLE;
   }
   else {
     // old can packet hasn't sent!
@@ -352,6 +390,13 @@ void TIM3_IRQ_Handler(void) {
     #ifdef DEBUG_CAN
       puts("CAN1 MISS1\n");
     #endif
+  }
+
+  // up timeout for gas set
+  if (timeout == MAX_TIMEOUT) {
+    state = FAULT_TIMEOUT;
+  } else {
+    timeout += 1U;
   }
 
   // reset the timer
@@ -364,6 +409,13 @@ void TIM3_IRQ_Handler(void) {
 // This function is the main application. It is run in a while loop from main() and is interrupted by those specified in main().
 void loop(void) {
   // read/write
+  if (state == NO_FAULT) {
+    register_set(&(TIM5->CCR3), min(gas_set_0, 2048), 0xFFFFU);
+    register_set(&(TIM5->CCR4), min(gas_set_1, 2048), 0xFFFFU);
+  } else {
+    register_set(&(TIM5->CCR3), 0, 0xFFFFU);
+    register_set(&(TIM5->CCR4), 0, 0xFFFFU);
+  }
   watchdog_feed();
 }
 
@@ -374,12 +426,12 @@ int main(void) {
   REGISTER_INTERRUPT(CAN1_TX_IRQn, CAN1_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
   REGISTER_INTERRUPT(CAN1_RX0_IRQn, CAN1_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
   REGISTER_INTERRUPT(CAN1_SCE_IRQn, CAN1_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
-  REGISTER_INTERRUPT(CAN2_TX_IRQn, CAN2_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
-  REGISTER_INTERRUPT(CAN2_RX0_IRQn, CAN2_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
-  REGISTER_INTERRUPT(CAN2_SCE_IRQn, CAN2_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
-  REGISTER_INTERRUPT(CAN3_TX_IRQn, CAN3_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
-  REGISTER_INTERRUPT(CAN3_RX0_IRQn, CAN3_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
-  REGISTER_INTERRUPT(CAN3_SCE_IRQn, CAN3_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
+  // REGISTER_INTERRUPT(CAN2_TX_IRQn, CAN2_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
+  // REGISTER_INTERRUPT(CAN2_RX0_IRQn, CAN2_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
+  // REGISTER_INTERRUPT(CAN2_SCE_IRQn, CAN2_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
+  // REGISTER_INTERRUPT(CAN3_TX_IRQn, CAN3_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
+  // REGISTER_INTERRUPT(CAN3_RX0_IRQn, CAN3_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
+  // REGISTER_INTERRUPT(CAN3_SCE_IRQn, CAN3_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
 
   // Should run at around 732Hz (see init below)
   REGISTER_INTERRUPT(TIM3_IRQn, TIM3_IRQ_Handler, 1000U, FAULT_INTERRUPT_RATE_TIM3)
@@ -401,26 +453,28 @@ int main(void) {
   usb_init();
   #endif
 
+  puts("INIT");
+
   // init can
   bool llcan_speed_set = llcan_set_speed(CAN1, 5000, false, false);
   if (!llcan_speed_set) {
     puts("Failed to set llcan1 speed");
   }
-  llcan_speed_set = llcan_set_speed(CAN2, 5000, false, false);
-  if (!llcan_speed_set) {
-    puts("Failed to set llcan2 speed");
-  }
-  llcan_speed_set = llcan_set_speed(CAN3, 5000, false, false);
-  if (!llcan_speed_set) {
-    puts("Failed to set llcan3 speed");
-  }
+  // llcan_speed_set = llcan_set_speed(CAN2, 5000, false, false);
+  // if (!llcan_speed_set) {
+  //   puts("Failed to set llcan2 speed");
+  // }
+  // llcan_speed_set = llcan_set_speed(CAN3, 5000, false, false);
+  // if (!llcan_speed_set) {
+  //   puts("Failed to set llcan3 speed");
+  // }
 
   bool ret = llcan_init(CAN1);
   UNUSED(ret);
-  ret = llcan_init(CAN2);
-  UNUSED(ret);
-  ret = llcan_init(CAN3);
-  UNUSED(ret);
+  // ret = llcan_init(CAN2);
+  // UNUSED(ret);
+  // ret = llcan_init(CAN3);
+  // UNUSED(ret);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
   
@@ -469,8 +523,8 @@ int main(void) {
   register_set(&(TIM5->ARR), (2048-1), 0xFFFFFFFFU);
   
   // set PWM to 50% (ARR / 1024)
-  register_set(&(TIM5->CCR3), 512, 0xFFFFU);
-  register_set(&(TIM5->CCR4), 1536, 0xFFFFU);
+  register_set(&(TIM5->CCR3), 0, 0xFFFFU);
+  register_set(&(TIM5->CCR4), 0, 0xFFFFU);
 
   watchdog_init();
 
