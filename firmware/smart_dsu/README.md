@@ -50,3 +50,9 @@ simply comment out the mask and the bitwise math:
 ```
 
 and flash the firmware
+
+```bash
+cd ocelot/firmware/smart_dsu
+# now put the device into recovery mode by holding BOOT and pressing RESET
+./recover.sh
+```
