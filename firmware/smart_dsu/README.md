@@ -8,6 +8,7 @@
 
 ## Supported cars with slight firmware changes
 - 2018 Camry Hybrid (tested by @halfcocked)
+- 2022 RAV4 Hybrid (tested by @sky)
 
 ## How it Works
 the Toyota ACC message 0x343 is read in on bus 3 of the gateway, modified, re-checksummed, then sent on to bus 1. if the ACC control message 0x343 is detected on bus 1, it will be blocked from bus 3 entirely. if the alt ACC control message 0xF10 is detected, the smartDSU will modify the forwarded 0x343 with data from inside 0xF10. this method ensures perfect message send rate preservation between the DSU and the vehicle CAN bus. 
