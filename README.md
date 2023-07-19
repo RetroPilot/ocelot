@@ -17,6 +17,8 @@ ocelot has you covered.
 ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and schematic are located in the `hardware` folder. 
 
 ## Firmware
+NOTICE: currently, flashing firmware only works on Ubuntu 20.04. on MacOS and newer Ubuntu, the firmware corrupts before sending to the device. this can be fixed by using a VM with Ubuntu 20.04 for now.
+
 ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), and it should be firmware-compatible with Panda firmware as a black panda. conversely, ocelot firmware should also work on a panda, which is helpful for development.
 
 ## Documentation
