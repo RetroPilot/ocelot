@@ -245,6 +245,7 @@ int aeb_cmd = 0;
 
 #define DSU_ACC_CONTROL 0x343
 bool acc_cancel = 0;
+bool distance_button = 0;
 
 #define DSU_AEB_CMD 0x344
 bool stock_aeb_active = 0;
@@ -393,14 +394,16 @@ void CAN3_RX0_IRQ_Handler(void) {
 
     switch (address) {
       case DSU_ACC_CONTROL: // ACC_CTRL
+        // sure we're wasting a few cycles, but hey, we need some stuff from here!
+        for (int i=0; i<8; i++) {
+          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+        }
+        distance_button = (dat[2] >> 4U) & 1U;
         if (op_ctrl_mode){
           to_fwd.RIR &= 0xFFFFFFFE; // do not fwd
           // op_ctrl_mode = 0; 
           // for now, just set this flag until the next reboot
         } else { 
-          for (int i=0; i<8; i++) {
-            dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-          }
           if(dat[7] == toyota_checksum(address, dat, 8)) {
             // add permit_braking and recompute the checksum
             dat[2] &= 0x3F; // mask off the top 2 bits
@@ -489,7 +492,7 @@ void TIM3_IRQ_Handler(void) {
   if (send){
     if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
       uint8_t dat[4];
-      dat[0] = 0;
+      dat[0] = (distance_button) << 7U;
       dat[1] = ctrl_mode;
       dat[2] = ((state & 0xFU) << 4) | (counter);
       dat[3] = toyota_checksum(0x2FF, dat, 4);
