@@ -26,6 +26,8 @@
 #define OUTPUT_ADDRESS 0x22F
 #define INPUT_ADDRESS 0x22E
 
+#define OUTPUT_ADDRESS_CRUISE 0x22D
+
 // uncomment for usb debugging via debug_console.py
 #define DEBUG_USB
 // #define DEBUG
@@ -232,6 +234,8 @@ int16_t torque_input = 0;
 int16_t angle_input = 0;
 bool steer_ok = 0;
 
+bool engage_switch = 0;
+
 // CAN 1 read function
 // this is where you read in data from CAN 1 and set variables
 void CAN1_RX0_IRQ_Handler(void) {
@@ -371,6 +375,8 @@ void TIM3_IRQ_Handler(void) {
   // send to EON
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
     uint8_t dat[7];
+    CAN_FIFOMailBox_TypeDef to_send;
+
     dat[6] = (torque_input >> 8) & 0xFF;
     dat[5] = (torque_input >> 0) & 0xFF;
     dat[4] = (0 >> 0) & 0xFF;
@@ -378,8 +384,6 @@ void TIM3_IRQ_Handler(void) {
     dat[2] = ((0 >> 0) | steer_ok) & 0xFF;
     dat[1] = ((state & 0xFU) << 4) | pkt_idx;
     dat[0] = lut_checksum(dat, 7, crc8_lut_1d);
-
-    CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16);
     to_send.RDTR = 7;
@@ -387,6 +391,19 @@ void TIM3_IRQ_Handler(void) {
     can_send(&to_send, 0, false);
     pkt_idx++;
     pkt_idx &= COUNTER_CYCLE;
+
+    // cruise state
+    uint16_t FAKE_SPEED = 6000;
+    dat[3] = (FAKE_SPEED >> 8) & 0xFF;
+    dat[2] = (FAKE_SPEED >> 0) & 0xFF;
+    dat[1] = engage_switch;
+    dat[0] = lut_checksum(dat, 4, crc8_lut_1d);
+    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
+    to_send.RDHR = 0;
+    to_send.RDTR = 4;
+    to_send.RIR = (OUTPUT_ADDRESS_CRUISE << 21) | 1U;
+    can_send(&to_send, 0, false);
+
   }
   else {
     // old can packet hasn't sent!
@@ -395,6 +412,7 @@ void TIM3_IRQ_Handler(void) {
       puts("CAN1 MISS1\n");
     #endif
   }
+
 
   // up timeout for gas set
   if (timeout == MAX_TIMEOUT) {
@@ -424,6 +442,9 @@ void loop(void) {
     register_set(&(TIM5->CCR3), 1024, 0xFFFFU);
     register_set(&(TIM5->CCR4), 1024, 0xFFFFU);
   }
+
+  engage_switch = !get_gpio_input(GPIOB, 14);
+
   watchdog_feed();
 }
 
@@ -506,6 +527,7 @@ int main(void) {
   set_gpio_mode(GPIOB, 13, MODE_OUTPUT);
   set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 13, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_mode(GPIOB, 14, MODE_INPUT);
   // set GPIO state ON
   set_gpio_output(GPIOB, 12, 1);
   set_gpio_output(GPIOB, 13, 1);
