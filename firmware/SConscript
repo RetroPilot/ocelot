@@ -32,6 +32,9 @@ elif os.getenv("GATEWAY"):
     MAIN = "eps_gw/main.c"
   elif os.getenv("GPIO_EXAMPLE"):
     MAIN = "gpio_example/main.c"
+  elif os.getenv("STEER_ACTUATOR_DEMO"):
+    MAIN = "steer_actuator_demo/main.c"
+    # TODO: clean this mess up, maybe get pwd or something?
   PROJECT_FLAGS = [
     "-mcpu=cortex-m4",
     "-mhard-float",
