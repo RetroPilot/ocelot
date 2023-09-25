@@ -1,13 +1,16 @@
 ### Parts
 
-| PN        | Description           | 
-|-----------|-----------------------|
-|BTS7960    | motor driver          |
-|FIT0493    | 350RPM motor          |
-|Ocelot Pro | Ocelot Pro CAN Devkit |
-|89245-0K020| TOYOTA angle sensor   |
-| -         | 1kOhm Resistor        |
-| -         | toggle switch         |
+| QTY | PN        | Description           | 
+|-----|-----------|-----------------------|
+|1    |BTS7960    | motor driver          |
+|2    |FIT0493    | 350RPM motor          |
+|1    |6656K236   | Ultra-Thin Ball Bearing, Steel Ring, Shielded, 60mm Shaft Diameter and 78mm Housing ID  |
+|1    |Ocelot Pro | Ocelot Pro CAN Devkit |
+|1    |89245-0K020| TOYOTA angle sensor   |
+|1    | -         | 1kOhm Resistor        |
+|1    | -         | toggle switch         |
+
+STL Files are in [here](../../hardware/actuator-demo) and were designed by @Vasillo on Discord
 
 Gear ratio between the motors and final drive gear is 10:1, thus the final torque output is around 18.828768 Nm at peak `((1.176798 Nm /motor * 2 motors) * 0.80 * 10)`
 
