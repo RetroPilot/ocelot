@@ -17,6 +17,21 @@ xcode-select --install
 
 Programming
 ----
+Ocelot Pro: Press and Hold SW1 while plugging in to get into DFU mode for flashing.
+
+**Panda**
+
+```
+scons -u # Compile
+./flash.sh # Compile & Flash
+```
+
+**SmartDSU**
+
+```
+cd smart_dsu
+./recover.sh # or ./recover_usb.sh
+```
 
 **Panda**
 
