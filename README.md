@@ -13,6 +13,8 @@ maybe you just want to gateway your Driving Support Unit and flip a few bits to 
 
 ocelot has you covered.
 
+buy one here: https://shop.retropilot.org/product/ocelot-pro-devkit/
+
 ## Hardware
 ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and schematic are located in the `hardware` folder. 
 
