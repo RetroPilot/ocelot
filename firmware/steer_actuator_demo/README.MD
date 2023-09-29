@@ -12,7 +12,7 @@
 
 STL Files are in [here](../../hardware/actuator-demo) and were designed by @Vasillo on Discord
 
-Gear ratio between the motors and final drive gear is 10:1, thus the final torque output is around 18.828768 Nm at peak `((1.176798 Nm /motor * 2 motors) * 0.80 * 10)`
+Gear ratio between the motors and final drive gear is 5:1, thus the final torque output is around 9.414384 Nm at peak `((1.176798 Nm /motor * 2 motors) * 0.80 * 5)`
 
 The 1k resistor pulls PB14 up to 3.3v, and the switch pulls the same pin to GND.
 
