@@ -259,7 +259,11 @@ void CAN1_RX0_IRQ_Handler(void) {
     to_fwd.RDLR = CAN1->sFIFOMailBox[0].RDLR;
     to_fwd.RDHR = CAN1->sFIFOMailBox[0].RDHR;
 
-    uint16_t address = CAN1->sFIFOMailBox[0].RIR >> 21;
+    uint32_t address = (CAN1->sFIFOMailBox[0].RIR >> 21);
+    uint8_t ide = (CAN1->sFIFOMailBox[0].RIR >> 2) & 0x01;
+    if(ide){
+      address = (CAN1->sFIFOMailBox[0].RIR >> 3);
+    }
 
     #ifdef DEBUG_CAN
     puts("CAN1 RX: ");
@@ -381,7 +385,11 @@ void CAN3_RX0_IRQ_Handler(void) {
     to_fwd.RDLR = CAN3->sFIFOMailBox[0].RDLR;
     to_fwd.RDHR = CAN3->sFIFOMailBox[0].RDHR;
 
-    uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
+    uint32_t address = (CAN3->sFIFOMailBox[0].RIR >> 21);
+    uint8_t ide = (CAN3->sFIFOMailBox[0].RIR >> 2) & 0x01;
+    if(ide){
+      address = (CAN3->sFIFOMailBox[0].RIR >> 3);
+    }
     
     #ifdef DEBUG_CAN
     puts("CAN2 RX: ");
