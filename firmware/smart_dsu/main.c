@@ -185,8 +185,8 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 // ***************************** can port *****************************
 
 // Toyota Checksum algorithm
-uint8_t toyota_checksum(int addr, uint8_t *dat, int len){
-  int cksum = 0;
+uint8_t toyota_checksum(uint32_t addr, uint8_t *dat, int len){
+  uint32_t cksum = 0;
   for(int ii = 0; ii < (len - 1); ii++){
     cksum = (cksum + dat[ii]); 
   }
