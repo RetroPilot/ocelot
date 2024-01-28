@@ -417,12 +417,12 @@ void CAN3_RX0_IRQ_Handler(void) {
             dat[2] &= 0x3F; // mask off the top 2 bits
             dat[2] |= (1 << 6U); // SET_ME_X01
             dat[3] |= (1 << 6U); // permit_braking
-            dat[7] = toyota_checksum(address, dat, 8); 
             if (enable_acc){ 
               // modify this before sending to the car only if requested
               dat[0] = (acc_cmd >> 8U);
               dat[1] = (acc_cmd & 0xFF);
             }
+            dat[7] = toyota_checksum(address, dat, 8); 
             to_fwd.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
             to_fwd.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
             // reset the timer for seeing the DSU
