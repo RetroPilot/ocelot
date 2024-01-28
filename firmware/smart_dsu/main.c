@@ -305,7 +305,7 @@ void CAN1_RX0_IRQ_Handler(void) {
           acc_cancel = (dat[3] & 1U);
           // reset the timer
           timeout_f10 = 0;
-          ctrl_mode |= 1; // set ACC_CTRL mode bit
+          ctrl_mode |= 0x1; // set ACC_CTRL mode bit
         } else {
           state = FAULT_BAD_CHECKSUM;
           enable_acc = 0;
@@ -324,7 +324,7 @@ void CAN1_RX0_IRQ_Handler(void) {
           aeb_cmd = (dat[0] << 2U) | (dat[1] & 3U);
           // reset the timer
           timeout_f11 = 0;
-          ctrl_mode |= (1 << 1U); // set AEB_CTRL mode bit
+          ctrl_mode |= 0x2; // set AEB_CTRL mode bit
           state = STATE_AEB_CTRL;
         } else {
           enable_aeb_control = 0;
