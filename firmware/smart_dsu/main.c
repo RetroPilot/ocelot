@@ -293,7 +293,7 @@ void CAN1_RX0_IRQ_Handler(void) {
       case ACC_CTRL:
         // send this EXACTLY how ACC_CONTROL is sent
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
         if (dat[7] == toyota_checksum(address, dat, 8)){
           enable_acc = 1; // TODO: set this somewhere else.. 1D2? do we need this?
@@ -312,7 +312,7 @@ void CAN1_RX0_IRQ_Handler(void) {
       case AEB_CTRL:
         // send this EXACTLY how PRE_COLLISION2 is sent
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
         if (dat[7] == toyota_checksum(address, dat, 8)){
           // an emergency maneuver is being requested
