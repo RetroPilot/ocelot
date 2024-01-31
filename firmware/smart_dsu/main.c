@@ -185,8 +185,8 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 // ***************************** can port *****************************
 
 // Toyota Checksum algorithm
-uint8_t toyota_checksum(int addr, uint8_t *dat, int len){
-  int cksum = 0;
+uint8_t toyota_checksum(uint32_t addr, uint8_t *dat, int len){
+  uint32_t cksum = 0;
   for(int ii = 0; ii < (len - 1); ii++){
     cksum = (cksum + dat[ii]); 
   }
@@ -259,7 +259,11 @@ void CAN1_RX0_IRQ_Handler(void) {
     to_fwd.RDLR = CAN1->sFIFOMailBox[0].RDLR;
     to_fwd.RDHR = CAN1->sFIFOMailBox[0].RDHR;
 
-    uint16_t address = CAN1->sFIFOMailBox[0].RIR >> 21;
+    uint32_t address = (CAN1->sFIFOMailBox[0].RIR >> 21);
+    uint8_t ide = (CAN1->sFIFOMailBox[0].RIR >> 2) & 0x01;
+    if(ide){
+      address = (CAN1->sFIFOMailBox[0].RIR >> 3);
+    }
 
     #ifdef DEBUG_CAN
     puts("CAN1 RX: ");
@@ -293,7 +297,7 @@ void CAN1_RX0_IRQ_Handler(void) {
       case ACC_CTRL:
         // send this EXACTLY how ACC_CONTROL is sent
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
         if (dat[7] == toyota_checksum(address, dat, 8)){
           enable_acc = 1; // TODO: set this somewhere else.. 1D2? do we need this?
@@ -301,7 +305,7 @@ void CAN1_RX0_IRQ_Handler(void) {
           acc_cancel = (dat[3] & 1U);
           // reset the timer
           timeout_f10 = 0;
-          ctrl_mode |= 1; // set ACC_CTRL mode bit
+          ctrl_mode |= 0x1; // set ACC_CTRL mode bit
         } else {
           state = FAULT_BAD_CHECKSUM;
           enable_acc = 0;
@@ -312,7 +316,7 @@ void CAN1_RX0_IRQ_Handler(void) {
       case AEB_CTRL:
         // send this EXACTLY how PRE_COLLISION2 is sent
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
         if (dat[7] == toyota_checksum(address, dat, 8)){
           // an emergency maneuver is being requested
@@ -320,7 +324,7 @@ void CAN1_RX0_IRQ_Handler(void) {
           aeb_cmd = (dat[0] << 2U) | (dat[1] & 3U);
           // reset the timer
           timeout_f11 = 0;
-          ctrl_mode |= (1 << 1U); // set AEB_CTRL mode bit
+          ctrl_mode |= 0x2; // set AEB_CTRL mode bit
           state = STATE_AEB_CTRL;
         } else {
           enable_aeb_control = 0;
@@ -381,7 +385,11 @@ void CAN3_RX0_IRQ_Handler(void) {
     to_fwd.RDLR = CAN3->sFIFOMailBox[0].RDLR;
     to_fwd.RDHR = CAN3->sFIFOMailBox[0].RDHR;
 
-    uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
+    uint32_t address = (CAN3->sFIFOMailBox[0].RIR >> 21);
+    uint8_t ide = (CAN3->sFIFOMailBox[0].RIR >> 2) & 0x01;
+    if(ide){
+      address = (CAN3->sFIFOMailBox[0].RIR >> 3);
+    }
     
     #ifdef DEBUG_CAN
     puts("CAN2 RX: ");
@@ -409,12 +417,12 @@ void CAN3_RX0_IRQ_Handler(void) {
             dat[2] &= 0x3F; // mask off the top 2 bits
             dat[2] |= (1 << 6U); // SET_ME_X01
             dat[3] |= (1 << 6U); // permit_braking
-            dat[7] = toyota_checksum(address, dat, 8); 
             if (enable_acc){ 
               // modify this before sending to the car only if requested
               dat[0] = (acc_cmd >> 8U);
               dat[1] = (acc_cmd & 0xFF);
             }
+            dat[7] = toyota_checksum(address, dat, 8); 
             to_fwd.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
             to_fwd.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
             // reset the timer for seeing the DSU
