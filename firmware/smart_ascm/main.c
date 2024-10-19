@@ -202,6 +202,14 @@ void CAN3_TX_IRQ_Handler(void) {
 uint32_t timeout_315 = 0;
 uint32_t timeout_1f1 = 0;
 
+#define NO_FAULT 0U
+#define FAULT_SCE 1U
+#define FAULT_STARTUP 2U
+
+uint8_t state1 = FAULT_STARTUP;
+uint8_t state2 = FAULT_STARTUP;
+uint8_t state3 = FAULT_STARTUP;
+
 bool send = 0;
 
 #define BRAKE_CONTROL 0x315
@@ -230,6 +238,8 @@ void CAN1_RX0_IRQ_Handler(void) { // Car chassis to ASCM
     puts("\n");
     #endif
 
+    state1 = NO_FAULT;
+
     // send to CAN3
     can_send(&to_fwd, 2, false);
     // next
@@ -239,6 +249,7 @@ void CAN1_RX0_IRQ_Handler(void) { // Car chassis to ASCM
 }
 
 void CAN1_SCE_IRQ_Handler(void) {
+  state1 = FAULT_SCE;
   can_sce(CAN1);
   llcan_clear_send(CAN1);
 }
@@ -264,6 +275,8 @@ void CAN2_RX0_IRQ_Handler(void) { // Car PT expansion with new 0x315 payload
     puth(address);
     puts("\n");
     #endif
+
+    state2 = NO_FAULT;
 
     switch (address) {
       case CAN_UPDATE:
@@ -304,6 +317,7 @@ void CAN2_RX0_IRQ_Handler(void) { // Car PT expansion with new 0x315 payload
 }
 
 void CAN2_SCE_IRQ_Handler(void) {
+  state2 = FAULT_SCE;
   can_sce(CAN2);
   llcan_clear_send(CAN2);
 }
@@ -330,6 +344,8 @@ void CAN3_RX0_IRQ_Handler(void) { // ASCM to car chassis (minus 0x315 when prese
     puts("\n");
     #endif
 
+    state3 = NO_FAULT;
+
     switch (address) {
       case BRAKE_CONTROL: // EBCMFrictionBrakeCmd
         if (op_ctrl_mode) {
@@ -349,6 +365,7 @@ void CAN3_RX0_IRQ_Handler(void) { // ASCM to car chassis (minus 0x315 when prese
 }
 
 void CAN3_SCE_IRQ_Handler(void) {
+  state3 = FAULT_SCE;
   can_sce(CAN3);
   llcan_clear_send(CAN3);
 }
@@ -359,6 +376,10 @@ void TIM3_IRQ_Handler(void) {
   if (send && gm_ign_mode){
     if ((CAN2->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
       uint8_t dat[4];
+      dat[0] = ((state1 & 0xFU) << 4) | (op_ctrl_mode);
+      dat[1] = ((state2 & 0xFU) << 4);
+      dat[2] = ((state3 & 0xFU) << 4);
+      dat[3] = 0;
 
       CAN_FIFOMailBox_TypeDef to_send;
       to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
