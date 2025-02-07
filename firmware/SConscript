@@ -47,6 +47,23 @@ elif os.getenv("GATEWAY"):
     "-DGATEWAY",
   ]
 
+elif os.getenv("INTERCEPTOR_F4"):
+  print("INTERCEPTOR_F4")
+  PROJECT = "interceptor_f4"
+  STARTUP_FILE = "startup_stm32f413xx.s"
+  MAIN = "interceptor_f4/main.c"
+  PROJECT_FLAGS = [
+    "-mcpu=cortex-m4",
+    "-mhard-float",
+    "-DSTM32F4",
+    "-DSTM32F413xx",
+    "-mfpu=fpv4-sp-d16",
+    "-fsingle-precision-constant",
+    "-Os",
+    "-g",
+    "-DGATEWAY"
+  ] 
+
 else:
   PROJECT = "panda"
   STARTUP_FILE = "startup_stm32f413xx.s"
