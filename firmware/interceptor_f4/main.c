@@ -351,6 +351,7 @@ int main(void) {
   // relay
   set_gpio_mode(GPIOB, 0, MODE_OUTPUT);
   set_gpio_output_type(GPIOB, 0, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output(GPIOB, 0, 1);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
   watchdog_init();
