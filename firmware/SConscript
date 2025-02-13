@@ -35,6 +35,8 @@ elif os.getenv("GATEWAY"):
   elif os.getenv("STEER_ACTUATOR_DEMO"):
     MAIN = "steer_actuator_demo/main.c"
     # TODO: clean this mess up, maybe get pwd or something?
+  elif os.getenv("RSG_GW"):
+    MAIN = "rsg_gateway/main.c"
   PROJECT_FLAGS = [
     "-mcpu=cortex-m4",
     "-mhard-float",
