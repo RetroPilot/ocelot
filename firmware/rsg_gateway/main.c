@@ -259,32 +259,19 @@ uint8_t crc8_lut_1d[256];
 // adc and dac stuff
 uint32_t adc_in = 0;
 
-void CAN1_RX0_IRQ_Handler(void) {
-  while ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) {
-    uint16_t address = CAN1->sFIFOMailBox[0].RIR >> 21;
+void CAN2_RX0_IRQ_Handler(void) {
+  while ((CAN2->RF0R & CAN_RF0R_FMP0) != 0) {
+    uint16_t address = CAN2->sFIFOMailBox[0].RIR >> 21;
     #ifdef DEBUG_CAN
-    puts("CAN1 RX: ");
+    puts("CAN2 RX: ");
     puth(address);
     puts("\n");
     #endif
     switch (address) {
-      case CAN_UPDATE:
-        if (GET_BYTES_04(&CAN1->sFIFOMailBox[0]) == 0xdeadface) {
-          if (GET_BYTES_48(&CAN1->sFIFOMailBox[0]) == 0x0ab00b1e) {
-            enter_bootloader_mode = ENTER_SOFTLOADER_MAGIC;
-            NVIC_SystemReset();
-          } else if (GET_BYTES_48(&CAN1->sFIFOMailBox[0]) == 0x02b00b1e) {
-            enter_bootloader_mode = ENTER_BOOTLOADER_MAGIC;
-            NVIC_SystemReset();
-          } else {
-            puts("Failed entering Softloader or Bootloader\n");
-          }
-        }
-        break;
       case CAN_INPUT_ACC_REQ: ;
         uint8_t dat[6];
         for (int i=0; i<6; i++) {
-          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
+          dat[i] = GET_BYTE(&CAN2->sFIFOMailBox[0], i);
         }
         uint8_t index = dat[1] & COUNTER_CYCLE;
         if(dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
@@ -314,7 +301,7 @@ void CAN1_RX0_IRQ_Handler(void) {
         break;
       default: ;
     }
-    can_rx(0);
+    can_rx(1);
   }
 }
 
@@ -324,52 +311,56 @@ void CAN1_SCE_IRQ_Handler(void) {
   llcan_clear_send(CAN1);
 }
 
-void CAN2_RX0_IRQ_Handler(void) {
+void CAN1_RX0_IRQ_Handler(void) {
   // PTCAN connects here
-  while ((CAN2->RF0R & CAN_RF0R_FMP0) != 0) {
-    uint16_t address = CAN2->sFIFOMailBox[0].RIR >> 21;
+  while ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) {
+    uint16_t address = CAN1->sFIFOMailBox[0].RIR >> 21;
     #ifdef DEBUG_CAN
     puts("CAN2 RX: ");
     puth(address);
     puts("\n");
     #endif
     switch (address) {
-      uint8_t dat[8];
       case CAN2_INPUT_SAS: ;
+      uint8_t dat[8];
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
         steer_angle = (((dat[0] & 0xF) << 8) | dat[1]) + (dat[4] >> 4 & 0xF);
         steer_rate = ((dat[4] & 0xF) << 8 | dat[5]);
         break;
       case CAN2_INPUT_WHEEL_SPEED1: ;
+      uint8_t dat1[8];
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat1[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
-        wheel_speed_fl = (dat[0] << 8) | (dat[1]);
-        wheel_speed_fr = (dat[2] << 8) | (dat[3]);
+        wheel_speed_fl = (dat1[0] << 8) | (dat1[1]);
+        wheel_speed_fr = (dat1[2] << 8) | (dat1[3]);
         break;
       case CAN2_INPUT_WHEEL_SPEED2: ;
+        uint8_t dat2[8];
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat2[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
-        wheel_speed_rl = (dat[0] << 8) | dat[1];
-        wheel_speed_rr = (dat[2] << 8) | dat[3];
+        wheel_speed_rl = (dat2[0] << 8) | dat2[1];
+        wheel_speed_rr = (dat2[2] << 8) | dat2[3];
         break;
       case CAN2_INPUT_SPEED: ;
+      uint8_t dat3[8];
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat3[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
-        vehicle_speed = (dat[5] << 8) | dat[6];
+        vehicle_speed = (dat3[5] << 8) | dat3[6];
         break;
       case CAN2_INPUT_BRAKE_MODULE: ;
+      uint8_t dat4[8];
         for (int i=0; i<8; i++) {
-          dat[i] = GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+          dat4[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
-        brakes_pressed = (dat[0] >> 4) & 0x01;      
+        brakes_pressed = (dat4[0] >> 4) & 0x01;      
       default: ;
     }
-    can_rx(1);
+    can_rx(0);
   }
 }
 
@@ -381,15 +372,13 @@ void CAN2_SCE_IRQ_Handler(void) {
 
 void CAN3_RX0_IRQ_Handler(void) {
   while ((CAN3->RF0R & CAN_RF0R_FMP0) != 0) {
-    uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
     #ifdef DEBUG_CAN
+    uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
     puts("CAN3 RX: ");
     puth(address);
     puts("\n");
-    #else
-    UNUSED(address);
     #endif
-    can_rx(2);
+    // can_rx(2);
   }
 }
 
@@ -412,10 +401,7 @@ void TIM3_IRQ_Handler(void) {
   // cmain loop for sending 100hz messages
 
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    // data packet and CAN mailbox
     uint8_t dat[8];
-    CAN_FIFOMailBox_TypeDef to_send;
-
     // steer angle and steer rate
     dat[5] = (steer_rate & 0xFF);
     dat[4] = (steer_rate >> 8U);
@@ -423,15 +409,19 @@ void TIM3_IRQ_Handler(void) {
     dat[2] = (steer_angle >> 8U);
     dat[1] = ((state & 0xFU) << 4) | can1_count_out;
     dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
+
+    CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     to_send.RDHR = dat[4] | (dat[5] << 8);
     to_send.RDTR = 6;
     to_send.RIR = (CAN_OUTPUT_SAS << 21) | 1U;
-    can_send(&to_send, to_send.RDTR, false);
+    can_send(&to_send, 1, false);
 
     can1_count_out++;
     can1_count_out &= COUNTER_CYCLE;
-
+  }
+  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
+    uint8_t dat[8];
     // wheel speeds
     dat[7] = (wheel_speed_rr & 0xFF);
     dat[6] = (wheel_speed_rr >> 8U);
@@ -441,21 +431,29 @@ void TIM3_IRQ_Handler(void) {
     dat[2] = (wheel_speed_fr >> 8U);
     dat[1] = (wheel_speed_fl & 0xFF);
     dat[0] = (wheel_speed_fl >> 8U);
+
+    CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
     to_send.RDTR = 8;
-
+    to_send.RIR = (CAN_OUTPUT_WHEEL_SPEED << 21) | 1U;
+    can_send(&to_send, 1, false);
+  }
+  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
+    uint8_t dat[8];
     dat[5] = 0;
     dat[4] = (acc_set_speed_kmh & 0xFF);
     dat[3] = (acc_set_speed_kmh << 8U);
     dat[2] = (acc_mode << 5U) | (acc_engaged << 4U) | (acc_on_off_sw << 3U) | (acc_speed_up << 2U) | (acc_speed_down << 1U) | (acc_cancel);
     dat[1] = ((state & 0xFU) << 4) | can1_count_out;
     dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
+    
+    CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     to_send.RDHR = dat[4] | (dat[5] << 8);
     to_send.RDTR = 6;
     to_send.RIR = (CAN_OUTPUT_ACC_STATE << 21) | 1U;
-    can_send(&to_send, to_send.RDTR, false);
+    can_send(&to_send, 1, false);
 
   } else {
     // old can packet hasn't sent!
@@ -478,6 +476,13 @@ void TIM3_IRQ_Handler(void) {
   puts("SWITCHES: ");
   puth((acc_mode << 5U) | (acc_engaged << 4U) | (acc_on_off_sw << 3U) | (acc_speed_up << 2U) | (acc_speed_down << 1U) | (acc_cancel));
   puts("\n");
+  // puts("SAS: ");
+  // puth(steer_angle);
+  // puts(" STEER_RATE: ");
+  // puth(steer_rate);
+  // puts(" SPEED: ");
+  // puth(vehicle_speed);
+  // puts("\n ");
 }
 
 // ***************************** main code *****************************
@@ -511,6 +516,7 @@ void loop(void) {
     acc_speed_down = 0;
     acc_speed_up = 0;
   }
+  
   watchdog_feed();
 
 }
