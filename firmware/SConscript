@@ -20,7 +20,8 @@ if os.getenv("PEDAL"):
     "-O2",
     "-DPEDAL",
   ]
-
+  
+# TODO: this is getting a bit ridiculous.
 elif os.getenv("GATEWAY"):
   PROJECT = "panda"
   STARTUP_FILE = "startup_stm32f413xx.s"
@@ -34,9 +35,12 @@ elif os.getenv("GATEWAY"):
     MAIN = "gpio_example/main.c"
   elif os.getenv("STEER_ACTUATOR_DEMO"):
     MAIN = "steer_actuator_demo/main.c"
-    # TODO: clean this mess up, maybe get pwd or something?
   elif os.getenv("RSG_GW"):
     MAIN = "rsg_gateway/main.c"
+  elif os.getenv("THROTTLE_ACTUATOR"):
+    MAIN = "throttle_actuator/main.c"
+  elif os.getenv("BODY_CONTROL_MODULE"):
+    MAIN = "body_control_module/main.c"
   PROJECT_FLAGS = [
     "-mcpu=cortex-m4",
     "-mhard-float",

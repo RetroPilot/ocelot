@@ -125,7 +125,7 @@ void CAN1_TX_IRQ_Handler(void) {
 uint16_t gas_set_0 = 0;
 uint16_t gas_set_1 = 0;
 
-#define MAX_TIMEOUT 10U
+#define MAX_TIMEOUT 5U
 uint32_t timeout = 0;
 uint32_t current_index = 0;
 
@@ -272,6 +272,7 @@ void TIM3_IRQ_Handler(void) {
   // up timeout for gas set
   if (timeout == MAX_TIMEOUT) {
     state = FAULT_TIMEOUT;
+    set_gpio_output(GPIOB, 0, 1);
   } else {
     timeout += 1U;
   }
@@ -282,19 +283,19 @@ void TIM3_IRQ_Handler(void) {
 
 void pedal(void) {
   // read/write
-  pdl0 = adc_get(13);
-  pdl1 = adc_get(12);
+  pdl0 = adc_get(12);
+  pdl1 = adc_get(13);
 
   // TODO: moar test plz
   magnitude = ABS((int32_t) pdl0 - (int32_t) pdl1);
-  override = magnitude > 0xB00;
+  override = magnitude > 0x900;
 
   // 0x7FF + pdl0
 
   // write the pedal to the DAC
   if (state == NO_FAULT) {
-    dac_set(0, (override ? pdl0 : gas_set_0));
-    dac_set(1, (override ? pdl1 : gas_set_1));
+    dac_set(0, (override ? pdl0 : gas_set_1));
+    dac_set(1, (override ? pdl1 : gas_set_0));
   } else {
     dac_set(0, pdl0);
     dac_set(1, pdl1);
