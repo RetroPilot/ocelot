@@ -144,7 +144,7 @@ uint8_t state = FAULT_STARTUP;
 const uint8_t crc_poly = 0x1D;  // standard crc8
 uint8_t crc8_lut_1d[256];
 
-uint16_t gpio_lights = 0;
+uint8_t gpio_lights = 0;
 #define L_TURN     1U << 15U
 #define R_TURN     1U << 14U
 #define TAIL       1U << 13U
@@ -152,22 +152,26 @@ uint16_t gpio_lights = 0;
 #define HIBEAM     (1U << 11U) | HEADLIGHTS
 
 void set_relays(uint16_t relay_buf){
-  set_gpio_output(GPIOB,  2, !((relay_buf >> 15U) & 1U));  // LTURN
-  set_gpio_output(GPIOB, 10, !((relay_buf >> 14U) & 1U));  // RTURN
-  set_gpio_output(GPIOB,  0, !((relay_buf >> 13U) & 1U));  // TAIL
-  set_gpio_output(GPIOB,  1, !((relay_buf >> 12U) & 1U));  // HEAD
-  set_gpio_output(GPIOC,  4, !((relay_buf >> 11U) & 1U));  // HIBEAM
-  set_gpio_output(GPIOC,  5, !((relay_buf >> 10U) & 1U));
-  set_gpio_output(GPIOA,  6, !((relay_buf >>  9U) & 1U));
-  set_gpio_output(GPIOA,  7, !((relay_buf >>  8U) & 1U));
-  set_gpio_output(GPIOA,  4, !((relay_buf >>  7U) & 1U));
-  set_gpio_output(GPIOA,  5, !((relay_buf >>  6U) & 1U));
-  set_gpio_output(GPIOA,  2, !((relay_buf >>  5U) & 1U));
-  set_gpio_output(GPIOA,  3, !((relay_buf >>  4U) & 1U));
-  set_gpio_output(GPIOC,  2, !((relay_buf >>  3U) & 1U));
-  set_gpio_output(GPIOC,  3, !((relay_buf >>  2U) & 1U));
-  set_gpio_output(GPIOC,  0, !((relay_buf >>  1U) & 1U));
-  set_gpio_output(GPIOC, 15, !((relay_buf >>  0U) & 1U));
+  set_gpio_output(GPIOA,  4, !((relay_buf >> 15U) & 1U));  // LTURN
+  set_gpio_output(GPIOA,  5, !((relay_buf >> 14U) & 1U));  // RTURN
+  set_gpio_output(GPIOA,  6, !((relay_buf >> 13U) & 1U));  // TAIL
+  set_gpio_output(GPIOA,  7, !((relay_buf >> 12U) & 1U));  // HEAD
+  set_gpio_output(GPIOB,  0, !((relay_buf >> 11U) & 1U));  // HIBEAM
+  set_gpio_output(GPIOB,  1, !((relay_buf >> 10U) & 1U));
+  set_gpio_output(GPIOB,  2, !((relay_buf >>  9U) & 1U));
+  set_gpio_output(GPIOB, 10, !((relay_buf >>  9U) & 1U));
+}
+
+uint8_t get_inputs(uint8_t input_buf){
+  input_buf |= get_gpio_input(GPIOC, 2) << 0U; // GPIOC2
+  input_buf |= get_gpio_input(GPIOC, 3) << 1U;
+  input_buf |= get_gpio_input(GPIOC, 4) << 2U;
+  input_buf |= get_gpio_input(GPIOC, 5) << 3U;
+  input_buf |= get_gpio_input(GPIOC, 6) << 4U;
+  input_buf |= get_gpio_input(GPIOC, 7) << 5U;
+  input_buf |= get_gpio_input(GPIOC, 8) << 6U;
+  input_buf |= get_gpio_input(GPIOC, 9) << 7U;
+  return input_buf;
 }
 
 void CAN1_RX0_IRQ_Handler(void) {
@@ -292,16 +296,9 @@ void TIM3_IRQ_Handler(void) {
 #define TPS_THRES 20
 void loop(void) {
   gpio_lights = 0; // L_TURN;
-  // read/write
-  gpio_lights |= (!get_gpio_input(GPIOC, 7)  ? R_TURN     : 0); // R_TURN_SW
-  gpio_lights |= (!get_gpio_input(GPIOC, 9)  ? L_TURN     : 0); // L_TURN
-  gpio_lights |= (!get_gpio_input(GPIOC, 8)  ? HEADLIGHTS : 0); // HEADLIGHTS_ON
-  gpio_lights |= (!get_gpio_input(GPIOC, 10) ? HIBEAM     : 0); // HIBEAM_ON
-  gpio_lights |= (!get_gpio_input(GPIOC, 11) ? HIBEAM     : 0); // FLASH
-  gpio_lights |= (!get_gpio_input(GPIOC, 12) ? TAIL       : 0); // TAIL
-
+  get_inputs(gpio_lights);
   set_relays(gpio_lights);
-
+  
   // if (state == NO_FAULT) {
 
   // } else {
@@ -355,54 +352,41 @@ int main(void) {
   NVIC_EnableIRQ(TIM3_IRQn);
 
   // setup GPIO inputs
-  set_gpio_mode(GPIOC, 7,  MODE_INPUT);
-  set_gpio_mode(GPIOC, 8,  MODE_INPUT);
-  set_gpio_mode(GPIOC, 9,  MODE_INPUT);
-  set_gpio_mode(GPIOC, 10, MODE_INPUT);
-  set_gpio_mode(GPIOC, 11, MODE_INPUT);
-  set_gpio_mode(GPIOC, 12, MODE_INPUT);
+  set_gpio_mode(GPIOC, 2, MODE_INPUT);
+  set_gpio_mode(GPIOC, 3, MODE_INPUT);
+  set_gpio_mode(GPIOC, 4, MODE_INPUT);
+  set_gpio_mode(GPIOC, 5, MODE_INPUT);
+  set_gpio_mode(GPIOC, 6, MODE_INPUT);
+  set_gpio_mode(GPIOC, 7, MODE_INPUT);
+  set_gpio_mode(GPIOC, 8, MODE_INPUT);
+  set_gpio_mode(GPIOC, 9, MODE_INPUT);
+  set_gpio_pullup(GPIOC, 2, PULL_UP);
+  set_gpio_pullup(GPIOC, 3, PULL_UP);
+  set_gpio_pullup(GPIOC, 4, PULL_UP);
+  set_gpio_pullup(GPIOC, 5, PULL_UP);
+  set_gpio_pullup(GPIOC, 6, PULL_UP);
+  set_gpio_pullup(GPIOC, 7, PULL_UP);
+  set_gpio_pullup(GPIOC, 8, PULL_UP);
+  set_gpio_pullup(GPIOC, 9, PULL_UP);
 
-  set_gpio_pullup(GPIOC, 7,  PULL_UP);
-  set_gpio_pullup(GPIOC, 8,  PULL_UP);
-  set_gpio_pullup(GPIOC, 9,  PULL_UP);
-  set_gpio_pullup(GPIOC, 10, PULL_UP);
-  set_gpio_pullup(GPIOC, 11, PULL_UP);
-  set_gpio_pullup(GPIOC, 12, PULL_UP);
-
-  // setup GPIO outputs. get ready for a doozy
-  set_gpio_mode(GPIOB, 2,  MODE_OUTPUT);
-  set_gpio_mode(GPIOB, 10, MODE_OUTPUT);
-  set_gpio_mode(GPIOB, 0,  MODE_OUTPUT);
-  set_gpio_mode(GPIOB, 1,  MODE_OUTPUT);
-  set_gpio_mode(GPIOC, 4,  MODE_OUTPUT);
-  set_gpio_mode(GPIOC, 5,  MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 6,  MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 7,  MODE_OUTPUT);
+  // setup GPIO outputs
   set_gpio_mode(GPIOA, 4,  MODE_OUTPUT);
   set_gpio_mode(GPIOA, 5,  MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 2,  MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 3,  MODE_OUTPUT);
-  set_gpio_mode(GPIOC, 2,  MODE_OUTPUT);
-  set_gpio_mode(GPIOC, 3,  MODE_OUTPUT);
-  set_gpio_mode(GPIOC, 0,  MODE_OUTPUT);
-  set_gpio_mode(GPIOC, 15, MODE_OUTPUT);
-
-  set_gpio_output_type(GPIOB, 2,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOB, 10, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOB, 0,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOB, 1,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOC, 4,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOC, 5,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 6,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 7,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_mode(GPIOA, 6,  MODE_OUTPUT);
+  set_gpio_mode(GPIOA, 7,  MODE_OUTPUT);
+  set_gpio_mode(GPIOB, 0,  MODE_OUTPUT);
+  set_gpio_mode(GPIOB, 1,  MODE_OUTPUT);
+  set_gpio_mode(GPIOB, 2,  MODE_OUTPUT);
+  set_gpio_mode(GPIOB, 10, MODE_OUTPUT);
   set_gpio_output_type(GPIOA, 4,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOA, 5,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 2,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 3,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOC, 2,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOC, 3,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOC, 0,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOC, 15, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOA, 6,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOA, 7,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 0,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 1,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 2,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 10, OUTPUT_TYPE_PUSH_PULL);
+
 
   // and then i decided to make something nicer. 
   set_relays(0);
