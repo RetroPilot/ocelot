@@ -20,27 +20,8 @@ if os.getenv("PEDAL"):
     "-O2",
     "-DPEDAL",
   ]
-  
-# TODO: this is getting a bit ridiculous.
-elif os.getenv("GATEWAY"):
-  PROJECT = "panda"
+else:
   STARTUP_FILE = "startup_stm32f413xx.s"
-  if os.getenv("IBST"):
-    MAIN = "ibst/main.c"
-  elif os.getenv("SDSU"):
-    MAIN = "smart_dsu/main.c"
-  elif os.getenv("EPS_GW"):
-    MAIN = "eps_gw/main.c"
-  elif os.getenv("GPIO_EXAMPLE"):
-    MAIN = "gpio_example/main.c"
-  elif os.getenv("STEER_ACTUATOR_DEMO"):
-    MAIN = "steer_actuator_demo/main.c"
-  elif os.getenv("RSG_GW"):
-    MAIN = "rsg_gateway/main.c"
-  elif os.getenv("THROTTLE_ACTUATOR"):
-    MAIN = "throttle_actuator/main.c"
-  elif os.getenv("BODY_CONTROL_MODULE"):
-    MAIN = "body_control_module/main.c"
   PROJECT_FLAGS = [
     "-mcpu=cortex-m4",
     "-mhard-float",
@@ -52,38 +33,32 @@ elif os.getenv("GATEWAY"):
     "-g",
     "-DGATEWAY",
   ]
+  if os.getenv("IBST"):
+    MAIN = "ibst/main.c"
+  if os.getenv("SDSU"):
+    MAIN = "smart_dsu/main.c"
+  if os.getenv("EPS_GW"):
+    MAIN = "eps_gw/main.c"
+  if os.getenv("GPIO_EXAMPLE"):
+    MAIN = "gpio_example/main.c"
+  if os.getenv("STEER_ACTUATOR_DEMO"):
+    MAIN = "steer_actuator_demo/main.c"
+  if os.getenv("RSG_GW"):
+    MAIN = "rsg_gateway/main.c"
+  if os.getenv("INTERCEPTOR_CORE"):
+    PROJECT = "interceptor_core"
+    MAIN = "RetroPilot_Cores/interceptor_core/main.c"
+  if os.getenv("ACTUATOR_CORE"):
+    PROJECT = "actuator_core"
+    MAIN = "RetroPilot_Cores/actuator_core/main.c"
+  if os.getenv("RELAY_CORE"):
+    PROJECT = "relay_core"
+    MAIN = "RetroPilot_Cores/relay_core/main.c"
+  else:
+    PROJECT = "panda"
+    MAIN = "main.c"
+    PROJECT_FLAGS.remove("-DGATEWAY")
 
-elif os.getenv("INTERCEPTOR_F4"):
-  print("INTERCEPTOR_F4")
-  PROJECT = "interceptor_f4"
-  STARTUP_FILE = "startup_stm32f413xx.s"
-  MAIN = "interceptor_f4/main.c"
-  PROJECT_FLAGS = [
-    "-mcpu=cortex-m4",
-    "-mhard-float",
-    "-DSTM32F4",
-    "-DSTM32F413xx",
-    "-mfpu=fpv4-sp-d16",
-    "-fsingle-precision-constant",
-    "-Os",
-    "-g",
-    "-DGATEWAY"
-  ] 
-
-else:
-  PROJECT = "panda"
-  STARTUP_FILE = "startup_stm32f413xx.s"
-  MAIN = "main.c"
-  PROJECT_FLAGS = [
-    "-mcpu=cortex-m4",
-    "-mhard-float",
-    "-DSTM32F4",
-    "-DSTM32F413xx",
-    "-mfpu=fpv4-sp-d16",
-    "-fsingle-precision-constant",
-    "-Os",
-    "-g",
-  ]
 
   if not PC:
     PROJECT_FLAGS += ["-DEON"]
