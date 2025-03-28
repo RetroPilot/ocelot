@@ -219,8 +219,7 @@ bool acc_cancel = 0;
 #define TPS_THRES 20
 
 // two independent values
-uint32_t gas_set_0 = 0;
-uint16_t gas_set_1 = 0;
+uint32_t gas_set = 0;
 // clutch
 bool clutch = 0;
 
@@ -279,47 +278,43 @@ void CAN1_RX0_IRQ_Handler(void) {
         dat[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
       }
       uint16_t value_0 = (dat[2] << 8) | dat[1];
-      uint16_t value_1 = (dat[4] << 8) | dat[3];
       bool enable = ((dat[5] >> 7) & 1U) != 0U;
       uint8_t index = dat[5] & COUNTER_CYCLE;
       if (dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
           if (enable) {
-            set_gpio_output(GPIOB, 4, 0);
-            gas_set_0 = value_0;
-            gas_set_1 = value_1;
-            uint32_t lower_deadzone = TPS_MIN + gas_set_0 - TPS_THRES;
-            uint32_t upper_deadzone = TPS_MIN + gas_set_0 + TPS_THRES;
-            set_gpio_output(GPIOA, 4, 1);
-            set_gpio_output(GPIOA, 5, 1);
-            // set_gpio_output(GPIOA, 2, 0);
-            // set_gpio_output(GPIOA, 3, 0);
+            // TODO: we gotta get this outta here!
+            set_gpio_output(GPIOB, 4, 1); // CLUTCH
+            gas_set = value_0;
+            uint32_t lower_deadzone = TPS_MIN + gas_set - TPS_THRES;
+            uint32_t upper_deadzone = TPS_MIN + gas_set + TPS_THRES;
+            set_gpio_output(GPIOB, 2, 0); // DIS
+            set_gpio_output(GPIOA, 2, 1); // PWM
+            set_gpio_output(GPIOB, 0, 1); // DIR
             // deadzone check
             if (pdl0 >= lower_deadzone && pdl0 <= upper_deadzone) {
               // Stop the motor if within the deadzone range
               set_gpio_output(GPIOA, 2, 0);
-              set_gpio_output(GPIOA, 3, 0);
+              set_gpio_output(GPIOB, 2, 1);
             }
-            else if (pdl0 < (uint32_t)(TPS_MIN + gas_set_0)) {
+            else if (pdl0 < (uint32_t)(TPS_MIN + gas_set)) {
                 // Turn the motor forward
                 set_gpio_output(GPIOA, 2, 0);
                 set_gpio_output(GPIOA, 3, 1);
             }
-            else if (pdl0 > (uint32_t)(TPS_MIN + gas_set_0)) {
+            else if (pdl0 > (uint32_t)(TPS_MIN + gas_set)) {
                 // Turn the motor reverse
                 set_gpio_output(GPIOA, 2, 1);
-                set_gpio_output(GPIOA, 3, 0);
+                set_gpio_output(GPIOB, 0, 0);
             }
           } else {
-            set_gpio_output(GPIOB, 4, 1);
-            set_gpio_output(GPIOA, 2, 0);
-            set_gpio_output(GPIOA, 3, 0);
-            set_gpio_output(GPIOA, 4, 0);
-            set_gpio_output(GPIOA, 5, 0);
-            gas_set_0 = 0;
-            gas_set_1 = 0;
+            set_gpio_output(GPIOB, 4, 0); // CLUTCH
+            set_gpio_output(GPIOA, 2, 0); // PWM
+            set_gpio_output(GPIOB, 2, 0); // DIR
+            set_gpio_output(GPIOB, 0, 1); // DIS
+            gas_set = 0;
             // clear the fault state if values are 0 and the incoming request is valid
-            if ((value_0 == 0U) && (value_1 == 0U)) {
+            if (value_0 == 0U) {
               state = NO_FAULT;
             } else {
               state = FAULT_INVALID;
@@ -430,8 +425,8 @@ void TIM3_IRQ_Handler(void) {
   puth(vss_cnt);
   puts(" buttons: ");
   puth((acc_mode << 5U) | (acc_engaged << 4U) | (acc_on_off_sw << 3U) | (acc_speed_up << 2U) | (acc_speed_down << 1U) | (acc_cancel));
-  puts(" gas_set_0: ");
-  puth(gas_set_0);
+  puts(" gas_set: ");
+  puth(gas_set);
   puts(" clutch: ");
   puth(clutch);
   puts("\n");
@@ -566,21 +561,37 @@ int main(void) {
   // clutch
   set_gpio_mode(GPIOB, 4, MODE_OUTPUT);
   set_gpio_output_type(GPIOB, 4, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_pullup(GPIOB, 4, PULL_UP);
-  set_gpio_output(GPIOB, 4, 1);
-  // motor
-  set_gpio_mode(GPIOA, 2, MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 3, MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 4, MODE_OUTPUT);
-  set_gpio_mode(GPIOA, 5, MODE_OUTPUT);
-  set_gpio_output_type(GPIOA, 2, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 3, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 4, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 5, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output(GPIOA, 2, 0);
-  set_gpio_output(GPIOA, 3, 0);
-  set_gpio_output(GPIOA, 4, 0);
-  set_gpio_output(GPIOA, 5, 0);
+  set_gpio_pullup(GPIOB, 4, PULL_DOWN);
+  set_gpio_output(GPIOB, 4, 0); // clutch off
+  // motors
+  set_gpio_mode(GPIOA, 2,  MODE_OUTPUT); // PWM MOTOR1
+  set_gpio_mode(GPIOB, 2,  MODE_OUTPUT); // DIS MOTOR1
+  set_gpio_mode(GPIOB, 0,  MODE_OUTPUT); // DIR MOTOR1
+  set_gpio_mode(GPIOA, 3,  MODE_OUTPUT); // PWM MOTOR2
+  set_gpio_mode(GPIOB, 3,  MODE_OUTPUT); // DIS MOTOR2
+  set_gpio_mode(GPIOB, 1,  MODE_OUTPUT); // DIR MOTOR2
+  set_gpio_mode(GPIOA, 10, MODE_OUTPUT); // CSN
+  set_gpio_output_type(GPIOA, 2,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOA, 3,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 0,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 1,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 2,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 3,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOA, 10, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_pullup(GPIOA, 2,  PULL_DOWN);
+  set_gpio_pullup(GPIOA, 3,  PULL_DOWN);
+  set_gpio_pullup(GPIOB, 0,  PULL_DOWN);
+  set_gpio_pullup(GPIOB, 1,  PULL_DOWN);
+  set_gpio_pullup(GPIOB, 2,  PULL_UP);
+  set_gpio_pullup(GPIOB, 3,  PULL_UP);
+  set_gpio_pullup(GPIOA, 10, PULL_UP); // CSN Active Low
+  set_gpio_output(GPIOA, 2,  0);
+  set_gpio_output(GPIOA, 3,  0);
+  set_gpio_output(GPIOB, 0,  0);
+  set_gpio_output(GPIOB, 1,  0);
+  set_gpio_output(GPIOB, 2,  1); // Motor1 disabled at boot
+  set_gpio_output(GPIOB, 3,  1); // Motor2 disabled at boot
+  set_gpio_output(GPIOA, 10, 0);
 
   // vss calcultation
   // enable the FPU
