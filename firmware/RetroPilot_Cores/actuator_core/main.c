@@ -51,7 +51,7 @@ uint32_t enter_bootloader_mode;
 void __initialize_hardware_early(void) {
   early();
 }
-#include "throttle_actuator/can.h"
+#include "RetroPilot_Cores/actuator_core/can.h"
 
 void __attribute__ ((noinline)) enable_fpu(void) {
   // enable the FPU
