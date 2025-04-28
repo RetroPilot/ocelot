@@ -35,7 +35,7 @@ cd firmware
 ./flash_docker.sh <project name>
 ```
 to remove all docker related items built for ocelot, use
-`./clean_docker.sh`. during development, the container can be updated with `docker build -t ocelot-builder .`
+`./clean_docker.sh`. during development, the container can be updated with `./build_container.sh`
 
 `<project name>` is defined in Sconscript. providing no arguments will list all projects available to build and flash.
 
