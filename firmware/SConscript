@@ -90,7 +90,7 @@ projects = {
 }
 
 def get_version(builder, build_type):
-  version_file = File('../VERSION').srcnode().abspath
+  version_file = File('./VERSION').srcnode().abspath
   version = open(version_file).read()
   try:
     git = subprocess.check_output(["git", "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
