@@ -2,7 +2,7 @@
 set -e
 
 cd ..
-SDSU=1 scons -u
-cd smart_dsu
+IBST=1 scons -u
+cd ibst
 
 ../../tests/gateway/enter_canloader.py ../obj/panda.bin.signed
