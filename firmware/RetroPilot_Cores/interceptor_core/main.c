@@ -21,12 +21,15 @@
 #include "gpio.h"
 #include "crc.h"
 
+// kinda janky, but for now uncomment this to use as a pedal interceptor
+// #define IC_GAS
+
 #define CAN CAN1
 
-#define PEDAL_USB
+#define IC_USB
 #define DEBUG
 
-#ifdef PEDAL_USB
+#ifdef IC_USB
   #include "drivers/uart.h"
   #include "drivers/usb.h"
 #else
@@ -52,7 +55,7 @@ void __initialize_hardware_early(void) {
 
 // ********************* serial debugging *********************
 
-#ifdef PEDAL_USB
+#ifdef IC_USB
 
 void debug_ring_callback(uart_ring *ring) {
   char rcv;
@@ -108,11 +111,15 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 
 #endif
 
-// ***************************** can port *****************************
-
+// ***************************** can port ***************************
 // addresses to be used on CAN
-#define CAN_GAS_INPUT  0x300
-#define CAN_GAS_OUTPUT 0x301U
+#ifdef IC_GAS 
+  #define CAN_GAS_INPUT  0x200
+  #define CAN_GAS_OUTPUT 0x201U
+#else
+  #define CAN_GAS_INPUT  0x300
+  #define CAN_GAS_OUTPUT 0x301U
+#endif
 #define CAN_GAS_SIZE 6
 #define COUNTER_CYCLE 0xFU
 
@@ -279,19 +286,26 @@ void TIM3_IRQ_Handler(void) {
 }
 
 // ***************************** main code *****************************
-// i lied about pedal. this is a torque interceptor.
 
 void pedal(void) {
   // read/write
   pdl0 = adc_get(12);
   pdl1 = adc_get(13);
 
-  // TODO: moar test plz
+#ifdef IC_GAS
+  // write the pedal to the DAC
+  if (state == NO_FAULT) {
+    dac_set(0, MAX(gas_set_0, pdl0));
+    dac_set(1, MAX(gas_set_1, pdl1));
+  } else {
+    dac_set(0, pdl0);
+    dac_set(1, pdl1);
+  }
+#else
+  // TODO: set this some other way. override should be set by the user
   magnitude = ABS((int32_t) pdl0 - (int32_t) pdl1);
   override = magnitude > 0x900;
-
   // 0x7FF + pdl0
-
   // write the pedal to the DAC
   if (state == NO_FAULT) {
     dac_set(0, (override ? pdl0 : gas_set_1));
@@ -300,8 +314,11 @@ void pedal(void) {
     dac_set(0, pdl0);
     dac_set(1, pdl1);
   }
+#endif
+
   watchdog_feed();
 }
+
 
 int main(void) {
   // Init interrupt table
@@ -327,7 +344,7 @@ int main(void) {
 
   set_gpio_mode(GPIOC, 3, MODE_ANALOG);
 
-#ifdef PEDAL_USB
+#ifdef IC_USB
   // enable USB
   usb_init();
 #endif

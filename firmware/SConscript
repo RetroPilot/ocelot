@@ -85,7 +85,7 @@ projects = {
   "panda": {
   "main": "main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": [flag for flag in PROJECT_FLAGS_F4 if flag != "-DGATEWAY"]
   },
 }
 
@@ -202,7 +202,6 @@ base_env = Environment(
     'Objcopy': Builder(generator=objcopy, suffix='.bin', src_suffix='.elf')
   }
 )
-
 # Generate gitversion.h once
 version = f'const uint8_t gitversion[] = "{get_version(BUILDER, "DEBUG")}";'
 gith = base_env.Textfile("obj/gitversion.h", [version, ""])
@@ -217,8 +216,6 @@ if (project in projects):
   main = projects.get(project).get("main")
   startup_file = projects.get(project).get("startup")
   flags = projects.get(project).get("flags")
-  if project == "panda":
-    flags.remove("-DGATEWAY")
   Build(base_env, gith, project, flags, main, startup_file)
 
 elif os.getenv("PROJECT") == "ALL":
@@ -228,8 +225,6 @@ elif os.getenv("PROJECT") == "ALL":
     main = project_info.get("main")
     startup_file = project_info.get("startup")
     flags = project_info.get("flags")
-    if project == "panda" and "-DGATEWAY" in flags:
-      flags.remove("-DGATEWAY")
     Build(base_env, gith, project, flags, main, startup_file)
 else:
   print(f"Unknown project {project}. Please set PROJECT env variable to one of the following: {', '.join(projects.keys())} or ALL")
