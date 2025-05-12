@@ -25,14 +25,13 @@ flashing:
 
 on Docker (recommended) 
 ```
-cd firmware
 ./build_container.sh
-./flash_docker.sh <project name>
+./flash_docker.sh <project name> #build and flash after
 ```
 
 on Ubuntu 20.04
 ```
-cd firmware
+./build_project.sh <project_name>
 ./recover.sh <project name>
 ```
 to remove all docker related items built for ocelot, use
