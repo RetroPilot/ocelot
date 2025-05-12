@@ -23,16 +23,17 @@ ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), 
 
 flashing:
 
-on Ubuntu 20.04
-```
-cd firmware
-./recover.sh <project name>
-```
-on Docker 
+on Docker (recommended) 
 ```
 cd firmware
 ./build_container.sh
 ./flash_docker.sh <project name>
+```
+
+on Ubuntu 20.04
+```
+cd firmware
+./recover.sh <project name>
 ```
 to remove all docker related items built for ocelot, use
 `./clean_docker.sh`. during development, the container can be updated with `./build_container.sh`

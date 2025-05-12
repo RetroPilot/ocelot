@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install libusb1 pycryptodome requests
 
-COPY . /firmware
+COPY . /ocelot
 
-WORKDIR /firmware
+WORKDIR /ocelot
 
-ENTRYPOINT ["./recover.sh"]
+# ENTRYPOINT ["./build_project.sh"]
