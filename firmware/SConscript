@@ -1,5 +1,7 @@
 import os
+import sys
 import subprocess
+import json
 
 EON = os.path.isfile('/EON')
 TICI = os.path.isfile('/TICI')
@@ -8,69 +10,83 @@ PC = not (EON or TICI)
 PREFIX = "arm-none-eabi-"
 BUILDER = "DEV"
 
-if os.getenv("PEDAL"):
-  PROJECT = "pedal"
-  STARTUP_FILE = "startup_stm32f205xx.s"
-  MAIN = "pedal/main.c"
-  PROJECT_FLAGS = [
-    "-mcpu=cortex-m3",
-    "-msoft-float",
-    "-DSTM32F2",
-    "-DSTM32F205xx",
-    "-O2",
-    "-DPEDAL",
-  ]
+PROJECT_FLAGS_F4 = [
+  "-mcpu=cortex-m4",
+  "-mhard-float",
+  "-DSTM32F4",
+  "-DSTM32F413xx",
+  "-mfpu=fpv4-sp-d16",
+  "-fsingle-precision-constant",
+  "-Os",
+  "-g",
+  "-DGATEWAY",
+]
 
-elif os.getenv("GATEWAY"):
-  PROJECT = "panda"
-  STARTUP_FILE = "startup_stm32f413xx.s"
-  if os.getenv("IBST"):
-    MAIN = "ibst/main.c"
-  elif os.getenv("SDSU"):
-    MAIN = "smart_dsu/main.c"
-  elif os.getenv("SASCM"):
-    MAIN = "smart_ascm/main.c"
-  elif os.getenv("EPS_GW"):
-    MAIN = "eps_gw/main.c"
-  elif os.getenv("GPIO_EXAMPLE"):
-    MAIN = "gpio_example/main.c"
-  elif os.getenv("STEER_ACTUATOR_DEMO"):
-    MAIN = "steer_actuator_demo/main.c"
-    # TODO: clean this mess up, maybe get pwd or something?
-  PROJECT_FLAGS = [
-    "-mcpu=cortex-m4",
-    "-mhard-float",
-    "-DSTM32F4",
-    "-DSTM32F413xx",
-    "-mfpu=fpv4-sp-d16",
-    "-fsingle-precision-constant",
-    "-Os",
-    "-g",
-    "-DGATEWAY",
-  ]
-
-else:
-  PROJECT = "panda"
-  STARTUP_FILE = "startup_stm32f413xx.s"
-  MAIN = "main.c"
-  PROJECT_FLAGS = [
-    "-mcpu=cortex-m4",
-    "-mhard-float",
-    "-DSTM32F4",
-    "-DSTM32F413xx",
-    "-mfpu=fpv4-sp-d16",
-    "-fsingle-precision-constant",
-    "-Os",
-    "-g",
-  ]
-
-  if not PC:
-    PROJECT_FLAGS += ["-DEON"]
-    BUILDER = "EON"
-
+projects = {
+  "pedal": { 
+  "main": "pedal/main.c",
+  "startup": "startup_stm32f205xx.s",
+  "flags": PROJECT_FLAGS_F2
+  },
+  "ibst": {
+  "main": "ibst/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "smart_dsu": {
+  "main": "smart_dsu/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "eps_gw": {
+  "main": "eps_gw/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "gpio_example": {
+  "main": "gpio_example/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "steer_actuator_demo": {
+  "main": "steer_actuator_demo/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "rsg_gateway": {
+  "main": "rsg_gateway/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "interceptor_core": {
+  "main": "RetroPilot_Cores/interceptor_core/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "actuator_core": {
+  "main": "RetroPilot_Cores/actuator_core/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "relay_core": {
+  "main": "RetroPilot_Cores/relay_core/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  },
+  "panda": {
+  "main": "panda/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": [flag for flag in PROJECT_FLAGS_F4 if flag != "-DGATEWAY"]
+  },
+  "sascm": {
+  "main": "smart_ascm/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  }
+}
 
 def get_version(builder, build_type):
-  version_file = File('../VERSION').srcnode().abspath
+  version_file = File('./VERSION').srcnode().abspath
   version = open(version_file).read()
   try:
     git = subprocess.check_output(["git", "rev-parse", "--short=8", "HEAD"], encoding='utf8').strip()
@@ -112,78 +128,100 @@ def get_key_header(name):
 def objcopy(source, target, env, for_signature):
     return '$OBJCOPY -O binary %s %s' % (source[0], target[0])
 
+def Build(env, gitversion, PROJECT, PROJECT_FLAGS, MAIN, STARTUP_FILE):
 
-linkerscript_fn = File("stm32_flash.ld").srcnode().abspath
+  linkerscript_fn = File("stm32_flash.ld").srcnode().abspath
 
-flags = [
-  "-Wall",
-  "-Wextra",
-  "-Wstrict-prototypes",
-  "-Werror",
-  "-mlittle-endian",
-  "-mthumb",
-  "-nostdlib",
-  "-fno-builtin",
-  f"-T{linkerscript_fn}",
-  "-std=gnu11",
-] + PROJECT_FLAGS
+  flags = [
+    "-Wall",
+    "-Wextra",
+    "-Wstrict-prototypes",
+    "-Werror",
+    "-mlittle-endian",
+    "-mthumb",
+    "-nostdlib",
+    "-fno-builtin",
+    f"-T{linkerscript_fn}",
+    "-std=gnu11",
+  ] + PROJECT_FLAGS
 
+  if os.getenv("RELEASE"):
+    BUILD_TYPE = "RELEASE"
+    cert_fn = os.getenv("CERT")
+    assert cert_fn is not None, 'No certificate file specified. Please set CERT env variable'
+    assert os.path.exists(cert_fn), 'Certificate file not found. Please specify absolute path'
+  else:
+    BUILD_TYPE = "DEBUG"
+    cert_fn = File("certs/debug").srcnode().abspath
+    flags += ["-DALLOW_DEBUG"]
 
-if os.getenv("RELEASE"):
-  BUILD_TYPE = "RELEASE"
-  cert_fn = os.getenv("CERT")
-  assert cert_fn is not None, 'No certificate file specified. Please set CERT env variable'
-  assert os.path.exists(cert_fn), 'Certificate file not found. Please specify absolute path'
-else:
-  BUILD_TYPE = "DEBUG"
-  cert_fn = File("certs/debug").srcnode().abspath
-  flags += ["-DALLOW_DEBUG"]
+  panda_env = env.Clone()
+  panda_env.Append( 
+    CFLAGS=flags,
+    ASFLAGS=flags,
+    LINKFLAGS=flags,
+    CPPPATH=["inc", "..", "."]
+  )
 
-includes = [
-  "inc",
-  "..",
-  ".",
-]
+  project_obj_dir = f"obj/{PROJECT}"
+  
+  # Bootstub
+  startup = panda_env.Object(f"{project_obj_dir}/{PROJECT}_startup.o", STARTUP_FILE)
+  crypto_sources = ["crypto/rsa.c", "crypto/sha.c"]
+  crypto_objects = [
+    panda_env.Object(f"{project_obj_dir}/{PROJECT}_{os.path.basename(src).replace('.c', '.o')}", src) 
+    for src in crypto_sources
+  ]
 
-panda_env = Environment(
+  bootstub_obj = panda_env.Object(f"{project_obj_dir}/{PROJECT}_bootstub.o", "bootstub.c")
+
+  bootstub_elf = panda_env.Program(f"{project_obj_dir}/bootstub.{PROJECT}.elf", [startup] + crypto_objects + [bootstub_obj])
+  bootstub_bin = panda_env.Objcopy(f"{project_obj_dir}/bootstub.{PROJECT}.bin", bootstub_elf)
+
+  # Build main
+  main_elf = panda_env.Program(f"{project_obj_dir}/{PROJECT}.elf", [startup, MAIN],
+    LINKFLAGS=["-Wl,--section-start,.isr_vector=0x8004000"] + flags)
+  main_bin = panda_env.Objcopy(f"{project_obj_dir}/{PROJECT}.bin", main_elf)
+
+  # Sign main
+  sign_py = File("./crypto/sign.py").srcnode().abspath
+  panda_bin_signed = panda_env.Command(f"obj/{PROJECT}.bin.signed", main_bin, f"SETLEN=1 {sign_py} $SOURCE $TARGET {cert_fn}")
+
+base_env = Environment(
   ENV=os.environ,
   CC=PREFIX + 'gcc',
   AS=PREFIX + 'gcc',
   OBJCOPY=PREFIX + 'objcopy',
   OBJDUMP=PREFIX + 'objdump',
   ASCOM="$AS $ASFLAGS -o $TARGET -c $SOURCES",
-  CFLAGS=flags,
-  ASFLAGS=flags,
-  LINKFLAGS=flags,
-  CPPPATH=includes,
   BUILDERS={
     'Objcopy': Builder(generator=objcopy, suffix='.bin', src_suffix='.elf')
   }
 )
+# Generate gitversion.h once
+version = f'const uint8_t gitversion[] = "{get_version(BUILDER, "DEBUG")}";'
+gith = base_env.Textfile("obj/gitversion.h", [version, ""])
 
-# Common autogenerated includes
-version = f'const uint8_t gitversion[] = "{get_version(BUILDER, BUILD_TYPE)}";'
-gitversion = panda_env.Textfile("obj/gitversion.h", [version, ""])
-Ignore('bootstub.o', gitversion)
-Requires('bootstub.o', gitversion)
-Ignore('main.o', gitversion)
-Requires('main.o', gitversion)
-
+# Generate cert.h once
 certs = [get_key_header(n) for n in ["debug", "release"]]
-certheader = panda_env.Textfile("obj/cert.h", certs + [""])
+certheader = base_env.Textfile("obj/cert.h", certs + [""])
 
-startup = panda_env.Object(STARTUP_FILE)
+project = os.getenv("PROJECT")
 
-# Bootstub
-crypto = ["./crypto/rsa.c", "./crypto/sha.c"]
-bootstub_elf = panda_env.Program(f"obj/bootstub.{PROJECT}.elf", [startup] + crypto + ["bootstub.c"])
-bootstub_bin = panda_env.Objcopy(f"obj/bootstub.{PROJECT}.bin", bootstub_elf)
+if (project in projects):  
+  main = projects.get(project).get("main")
+  startup_file = projects.get(project).get("startup")
+  flags = projects.get(project).get("flags")
+  Build(base_env, gith, project, flags, main, startup_file)
 
-# Build main
-main_elf = panda_env.Program(f"obj/{PROJECT}.elf", [startup, MAIN],
-  LINKFLAGS=["-Wl,--section-start,.isr_vector=0x8004000"] + flags)
-main_bin = panda_env.Objcopy(f"obj/{PROJECT}.bin", main_elf)
-
-# Sign main
-sign_py = File("./crypto/sign.py").srcnode().abspath
-panda_bin_signed = panda_env.Command(f"obj/{PROJECT}.bin.signed", main_bin, f"SETLEN=1 {sign_py} $SOURCE $TARGET {cert_fn}")
+elif os.getenv("PROJECT") == "ALL":
+  # build all projects
+  print("BUILDING ALL PROJECTS")
+  for project, project_info in projects.items():
+    main = project_info.get("main")
+    startup_file = project_info.get("startup")
+    flags = project_info.get("flags")
+    Build(base_env, gith, project, flags, main, startup_file)
+else:
+  print(f"Unknown project {project}. Please set PROJECT env variable to one of the following: {', '.join(projects.keys())} or ALL")
+  sys.exit(1)

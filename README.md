@@ -19,9 +19,25 @@ buy one here: https://shop.retropilot.org/product/ocelot-pro-devkit/
 ocelot hardware is based on STM32F413, and is fully OSHW. board files, bom, and schematic are located in the `hardware` folder. 
 
 ## Firmware
-NOTICE: currently, flashing firmware only works on Ubuntu 20.04. on MacOS and newer Ubuntu, the firmware corrupts before sending to the device. this can be fixed by using a VM with Ubuntu 20.04 for now.
-
 ocelot firmware borrows heavily from [panda](https://github.com/commaai/panda), and it should be firmware-compatible with Panda firmware as a black panda. conversely, ocelot firmware should also work on a panda, which is helpful for development.
+
+flashing:
+
+on Docker (recommended) 
+```
+./build_container.sh
+./flash_docker.sh <project name> #build and flash after
+```
+
+on Ubuntu 20.04
+```
+./build_project.sh <project_name>
+./recover.sh <project name>
+```
+to remove all docker related items built for ocelot, use
+`./clean_docker.sh`. during development, the container can be updated with `./build_container.sh`
+
+`<project name>` is defined in Sconscript. providing no arguments will list all projects available to build and flash.
 
 ## Documentation
 full documentation and examples are available at the [RetroPilot Wiki](https://wiki.retropilot.org/index/hardware/ocelot):

@@ -10,7 +10,7 @@
 |1    | -         | 1kOhm Resistor        |
 |1    | -         | toggle switch         |
 
-STL Files are in [here](../../hardware/actuator-demo) and were designed by @Vasillo on Discord
+STL Files are in [here](../../hardware/actuator-demo) and were designed by David Abraham (@Vasillo on Discord)
 
 Gear ratio between the motors and final drive gear is 5:1, thus the final torque output is around 9.414384 Nm at peak `((1.176798 Nm /motor * 2 motors) * 0.80 * 5)`
 
