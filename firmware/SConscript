@@ -10,6 +10,15 @@ PC = not (EON or TICI)
 PREFIX = "arm-none-eabi-"
 BUILDER = "DEV"
 
+PROJECT_FLAGS_F2 = [
+  "-mcpu=cortex-m3",
+  "-msoft-float",
+  "-DSTM32F2",
+  "-DSTM32F205xx",
+  "-O2",
+  "-DPEDAL",
+]
+
 PROJECT_FLAGS_F4 = [
   "-mcpu=cortex-m4",
   "-mhard-float",
