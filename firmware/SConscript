@@ -87,6 +87,11 @@ projects = {
   "startup": "startup_stm32f413xx.s",
   "flags": [flag for flag in PROJECT_FLAGS_F4 if flag != "-DGATEWAY"]
   },
+  "sascm": {
+  "main": "smart_ascm/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
+  }
 }
 
 def get_version(builder, build_type):
