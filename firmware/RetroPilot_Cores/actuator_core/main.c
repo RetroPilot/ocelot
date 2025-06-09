@@ -284,18 +284,23 @@ void CAN1_RX0_IRQ_Handler(void) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
           if (enable) {
             // TODO: we gotta get this outta here!
-            set_gpio_output(GPIOB, 4, 1); // CLUTCH
+            set_gpio_output(GPIOB, 4, 0); // CLUTCH
             gas_set = value_0;
-            uint32_t lower_deadzone = TPS_MIN + gas_set - TPS_THRES;
-            uint32_t upper_deadzone = TPS_MIN + gas_set + TPS_THRES;
-            set_gpio_output(GPIOB, 2, 0); // DIS
+            //uint32_t lower_deadzone = TPS_MIN + gas_set - TPS_THRES;
+            //uint32_t upper_deadzone = TPS_MIN + gas_set + TPS_THRES;
+            set_gpio_output(GPIOB, 10, 0); // DIS
             set_gpio_output(GPIOA, 2, 1); // PWM
             set_gpio_output(GPIOB, 0, 1); // DIR
             // deadzone check
+            set_gpio_output(GPIOB, 3,  0); 
+            set_gpio_output(GPIOA, 3,  1);
+            set_gpio_output(GPIOB, 1,  0); // DIR
+
+            /*
             if (pdl0 >= lower_deadzone && pdl0 <= upper_deadzone) {
               // Stop the motor if within the deadzone range
               set_gpio_output(GPIOA, 2, 0);
-              set_gpio_output(GPIOB, 2, 1);
+              set_gpio_output(GPIOB, 10, 1);
             }
             else if (pdl0 < (uint32_t)(TPS_MIN + gas_set)) {
                 // Turn the motor forward
@@ -307,11 +312,16 @@ void CAN1_RX0_IRQ_Handler(void) {
                 set_gpio_output(GPIOA, 2, 1);
                 set_gpio_output(GPIOB, 0, 0);
             }
+            */
           } else {
-            set_gpio_output(GPIOB, 4, 0); // CLUTCH
+            set_gpio_output(GPIOB, 4, 1); // CLUTCH
             set_gpio_output(GPIOA, 2, 0); // PWM
-            set_gpio_output(GPIOB, 2, 0); // DIR
-            set_gpio_output(GPIOB, 0, 1); // DIS
+            set_gpio_output(GPIOB, 10, 0); // DIS
+            set_gpio_output(GPIOB, 0, 1); // DIR
+
+            set_gpio_output(GPIOB, 3,  1);
+            set_gpio_output(GPIOA, 3,  0);
+            set_gpio_output(GPIOB, 1,  1);
             gas_set = 0;
             // clear the fault state if values are 0 and the incoming request is valid
             if (value_0 == 0U) {
@@ -562,36 +572,50 @@ int main(void) {
   set_gpio_mode(GPIOB, 4, MODE_OUTPUT);
   set_gpio_output_type(GPIOB, 4, OUTPUT_TYPE_PUSH_PULL);
   set_gpio_pullup(GPIOB, 4, PULL_DOWN);
-  set_gpio_output(GPIOB, 4, 0); // clutch off
+  set_gpio_output(GPIOB, 4, 1); // clutch off
   // motors
   set_gpio_mode(GPIOA, 2,  MODE_OUTPUT); // PWM MOTOR1
-  set_gpio_mode(GPIOB, 2,  MODE_OUTPUT); // DIS MOTOR1
+  set_gpio_mode(GPIOB, 10, MODE_OUTPUT); // DIS MOTOR1
   set_gpio_mode(GPIOB, 0,  MODE_OUTPUT); // DIR MOTOR1
+
   set_gpio_mode(GPIOA, 3,  MODE_OUTPUT); // PWM MOTOR2
   set_gpio_mode(GPIOB, 3,  MODE_OUTPUT); // DIS MOTOR2
   set_gpio_mode(GPIOB, 1,  MODE_OUTPUT); // DIR MOTOR2
+
   set_gpio_mode(GPIOA, 10, MODE_OUTPUT); // CSN
+  // SCK PA5
+  // MOSI PA7
+  // MISO PA6
+
   set_gpio_output_type(GPIOA, 2,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOA, 3,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 10, OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 0,  OUTPUT_TYPE_PUSH_PULL);
+
+  set_gpio_output_type(GPIOA, 3,  OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 3,  OUTPUT_TYPE_PUSH_PULL);  
   set_gpio_output_type(GPIOB, 1,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOB, 2,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOB, 3,  OUTPUT_TYPE_PUSH_PULL);
+ 
   set_gpio_output_type(GPIOA, 10, OUTPUT_TYPE_PUSH_PULL);
+ 
   set_gpio_pullup(GPIOA, 2,  PULL_DOWN);
-  set_gpio_pullup(GPIOA, 3,  PULL_DOWN);
+  set_gpio_pullup(GPIOB, 10, PULL_UP);
   set_gpio_pullup(GPIOB, 0,  PULL_DOWN);
-  set_gpio_pullup(GPIOB, 1,  PULL_DOWN);
-  set_gpio_pullup(GPIOB, 2,  PULL_UP);
+
+  set_gpio_pullup(GPIOA, 3,  PULL_DOWN);
   set_gpio_pullup(GPIOB, 3,  PULL_UP);
+  set_gpio_pullup(GPIOB, 1,  PULL_DOWN);
+
   set_gpio_pullup(GPIOA, 10, PULL_UP); // CSN Active Low
+
   set_gpio_output(GPIOA, 2,  0);
-  set_gpio_output(GPIOA, 3,  0);
+  set_gpio_output(GPIOB, 10, 1); // Motor1 disabled at boot
   set_gpio_output(GPIOB, 0,  0);
-  set_gpio_output(GPIOB, 1,  0);
-  set_gpio_output(GPIOB, 2,  1); // Motor1 disabled at boot
+
+  set_gpio_output(GPIOA, 3,  0);
   set_gpio_output(GPIOB, 3,  1); // Motor2 disabled at boot
-  set_gpio_output(GPIOA, 10, 0);
+  set_gpio_output(GPIOB, 1,  0);
+
+  set_gpio_output(GPIOA, 10, 0); //CSN
 
   // vss calcultation
   // enable the FPU

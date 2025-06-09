@@ -113,8 +113,9 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 // ***************************** can port *****************************
 
 // addresses to be used on CAN
-#define CAN_OUTPUT_ACC_STATE 0x150
-#define CAN_GAS_SIZE 6
+#define CAN_OUTPUT 0x601U
+#define CAN_INPUT  0x600U
+#define CAN_SIZE 4
 #define COUNTER_CYCLE 0xFU
 
 void CAN1_TX_IRQ_Handler(void) {
@@ -122,7 +123,7 @@ void CAN1_TX_IRQ_Handler(void) {
   CAN->TSR |= CAN_TSR_RQCP0;
 }
 
-#define MAX_TIMEOUT 10U
+#define MAX_TIMEOUT 100U
 uint32_t timeout = 0;
 uint32_t current_index = 0;
 
@@ -145,24 +146,27 @@ const uint8_t crc_poly = 0x1D;  // standard crc8
 uint8_t crc8_lut_1d[256];
 
 uint8_t gpio_lights = 0;
+uint8_t can_lights = 0;
+
 #define L_TURN     1U << 15U
 #define R_TURN     1U << 14U
 #define TAIL       1U << 13U
 #define HEADLIGHTS 1U << 12U
 #define HIBEAM     (1U << 11U) | HEADLIGHTS
 
-void set_relays(uint16_t relay_buf){
-  set_gpio_output(GPIOA,  4, !((relay_buf >> 15U) & 1U));  // LTURN
-  set_gpio_output(GPIOA,  5, !((relay_buf >> 14U) & 1U));  // RTURN
-  set_gpio_output(GPIOA,  6, !((relay_buf >> 13U) & 1U));  // TAIL
-  set_gpio_output(GPIOA,  7, !((relay_buf >> 12U) & 1U));  // HEAD
-  set_gpio_output(GPIOB,  0, !((relay_buf >> 11U) & 1U));  // HIBEAM
-  set_gpio_output(GPIOB,  1, !((relay_buf >> 10U) & 1U));
-  set_gpio_output(GPIOB,  2, !((relay_buf >>  9U) & 1U));
-  set_gpio_output(GPIOB, 10, !((relay_buf >>  9U) & 1U));
+void set_relays(uint8_t relay_buf){
+  set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U);  // LTURN
+  set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);  // RTURN
+  set_gpio_output(GPIOA,  6, (relay_buf >> 2U) & 1U);  // TAIL
+  set_gpio_output(GPIOA,  7, (relay_buf >> 3U) & 1U);  // HEAD
+  set_gpio_output(GPIOB,  0, (relay_buf >> 4U) & 1U);  // HIBEAM
+  set_gpio_output(GPIOB,  1, (relay_buf >> 5U) & 1U);
+  set_gpio_output(GPIOB, 10, (relay_buf >> 6U) & 1U);
+  set_gpio_output(GPIOB, 12, (relay_buf >> 7U) & 1U);
 }
 
-uint8_t get_inputs(uint8_t input_buf){
+uint8_t get_inputs(void){
+  uint8_t input_buf = 0;
   input_buf |= get_gpio_input(GPIOC, 2) << 0U; // GPIOC2
   input_buf |= get_gpio_input(GPIOC, 3) << 1U;
   input_buf |= get_gpio_input(GPIOC, 4) << 2U;
@@ -176,68 +180,54 @@ uint8_t get_inputs(uint8_t input_buf){
 
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN->RF0R & CAN_RF0R_FMP0) != 0) {
-  //   #ifdef DEBUG
-  //     puts("CAN RX\n");
-  //   #endif
-  //   int address = CAN->sFIFOMailBox[0].RIR >> 21;
-  //   if (address == CAN_GAS_INPUT) {
-  //     // softloader entry
-  //     if (GET_BYTES_04(&CAN->sFIFOMailBox[0]) == 0xdeadface) {
-  //       if (GET_BYTES_48(&CAN->sFIFOMailBox[0]) == 0x0ab00b1e) {
-  //         enter_bootloader_mode = ENTER_SOFTLOADER_MAGIC;
-  //         NVIC_SystemReset();
-  //       } else if (GET_BYTES_48(&CAN->sFIFOMailBox[0]) == 0x02b00b1e) {
-  //         enter_bootloader_mode = ENTER_BOOTLOADER_MAGIC;
-  //         NVIC_SystemReset();
-  //       } else {
-  //         puts("Failed entering Softloader or Bootloader\n");
-  //       }
-  //     }
+    #ifdef DEBUG
+      puts("CAN RX\n");
+    #endif
+    int address = CAN->sFIFOMailBox[0].RIR >> 21;
+    if (address == CAN_INPUT) {
+      // softloader entry
+      if (GET_BYTES_04(&CAN->sFIFOMailBox[0]) == 0xdeadface) {
+        if (GET_BYTES_48(&CAN->sFIFOMailBox[0]) == 0x0ab00b1e) {
+          enter_bootloader_mode = ENTER_SOFTLOADER_MAGIC;
+          NVIC_SystemReset();
+        } else if (GET_BYTES_48(&CAN->sFIFOMailBox[0]) == 0x02b00b1e) {
+          enter_bootloader_mode = ENTER_BOOTLOADER_MAGIC;
+          NVIC_SystemReset();
+        } else {
+          puts("Failed entering Softloader or Bootloader\n");
+        }
+      }
 
-  //     // normal packet
-  //     uint8_t dat[6];
-  //     for (int i=0; i<6; i++) {
-  //       dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
-  //     }
-  //     uint16_t value_0 = (dat[2] << 8) | dat[1];
-  //     uint16_t value_1 = (dat[4] << 8) | dat[3];
-  //     bool enable = ((dat[5] >> 7) & 1U) != 0U;
-  //     uint8_t index = dat[5] & COUNTER_CYCLE;
-  //     bool sig_valid = true;
-  //     if (value_0 > 0x5DC){
-  //       sig_valid = false;
-  //     }
-  //     if (dat[0] == lut_checksum(dat, CAN_GAS_SIZE, crc8_lut_1d)) {
-  //       if (((current_index + 1U) & COUNTER_CYCLE) == index) {
-  //         #ifdef DEBUG
-  //           puts("setting throttle: ");
-  //           puth(0x820 + value_0);
-  //           puts("\n");
-  //         #endif
-  //         if (enable) {
-  //           clutch = enable;
-  //           gas_set_0 = value_0;
-  //           gas_set_1 = value_1;
-  //         } else {
-  //           // clear the fault state if values are 0 and the incoming request is valid
-  //           if ((value_0 == 0U) && (value_1 == 0U) && sig_valid) {
-  //             state = NO_FAULT;
-  //           } else {
-  //             state = FAULT_INVALID;
-  //           }
-  //           clutch = 0;
-  //           gas_set_0 = 0;
-  //           gas_set_1 = 0;
-  //         }
-  //         // clear the timeout
-  //         timeout = 0;
-  //       }
-  //       current_index = index;
-  //     } else {
-  //       // wrong checksum = fault
-  //       state = FAULT_BAD_CHECKSUM;
-  //     }
-  //   }
+      // normal packet
+      uint8_t dat[CAN_SIZE];
+      for (int i=0; i<CAN_SIZE; i++) {
+        dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
+      }
+      uint8_t value_0 = dat[1];
+      bool enable = ((dat[3] >> 7) & 1U) != 0U;
+      uint8_t index = dat[3] & COUNTER_CYCLE;
+      if (dat[0] == lut_checksum(dat, CAN_SIZE, crc8_lut_1d)) {
+        if (((current_index + 1U) & COUNTER_CYCLE) == index) {
+          if (enable) {
+            can_lights = value_0;
+          } else {
+            // clear the fault state if values are 0 and the incoming request is valid
+            if (value_0 == 0U) {
+              state = NO_FAULT;
+            } else {
+              state = FAULT_INVALID;
+            }
+            can_lights = 0;
+          }
+          // clear the timeout
+          timeout = 0;
+        }
+        current_index = index;
+      } else {
+        // wrong checksum = fault
+        state = FAULT_BAD_CHECKSUM;
+      }
+    }
     // next
     CAN->RF0R |= CAN_RF0R_RFOM0;
   }
@@ -252,28 +242,26 @@ unsigned int pkt_idx = 0;
 
 void TIM3_IRQ_Handler(void) {
 
-  // // check timer for sending the user pedal and clearing the CAN
-  // if ((CAN->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-  //   uint8_t dat[6];
-  //   dat[1] = (pdl0 >> 0) & 0xFFU;
-  //   dat[2] = (pdl0 >> 8) & 0xFFU;
-  //   dat[3] = (pdl1 >> 0) & 0xFFU;
-  //   dat[4] = (pdl1 >> 8) & 0xFFU;
-  //   dat[5] = ((state & 0xFU) << 4) | pkt_idx;
-  //   dat[0] = lut_checksum(dat, CAN_GAS_SIZE, crc8_lut_1d);
-  //   CAN->sTxMailBox[0].TDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-  //   CAN->sTxMailBox[0].TDHR = dat[4] | (dat[5] << 8);
-  //   CAN->sTxMailBox[0].TDTR = 6;  // len of packet is 5
-  //   CAN->sTxMailBox[0].TIR = (CAN_GAS_OUTPUT << 21) | 1U;
-  //   ++pkt_idx;
-  //   pkt_idx &= COUNTER_CYCLE;
-  // } else {
-  //   // old can packet hasn't sent!
-  //   state = FAULT_SEND;
-  //   #ifdef DEBUG
-  //     // puts("CAN MISS\n");
-  //   #endif
-  // }
+  // check timer for sending the IO state and clearing the CAN
+  if ((CAN->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
+    uint8_t dat[CAN_SIZE];
+    dat[1] = (~gpio_lights >> 0) & 0xFFU;
+    dat[2] = (~gpio_lights >> 8) & 0xFFU;
+    dat[3] = ((state & 0xFU) << 4) | pkt_idx;
+    dat[0] = lut_checksum(dat, CAN_SIZE, crc8_lut_1d);
+    CAN->sTxMailBox[0].TDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
+    CAN->sTxMailBox[0].TDHR = 0;
+    CAN->sTxMailBox[0].TDTR = 4;  // len of packet is 5
+    CAN->sTxMailBox[0].TIR = (CAN_OUTPUT << 21) | 1U;
+    ++pkt_idx;
+    pkt_idx &= COUNTER_CYCLE;
+  } else {
+    // old can packet hasn't sent!
+    state = FAULT_SEND;
+    #ifdef DEBUG
+      // puts("CAN MISS\n");
+    #endif
+  }
 
   // blink the LED
   TIM3->SR = 0;
@@ -287,6 +275,7 @@ void TIM3_IRQ_Handler(void) {
 
   #ifdef DEBUG
   puth(gpio_lights);
+  puth(can_lights);
   puts("\n");
   #endif
 
@@ -295,15 +284,16 @@ void TIM3_IRQ_Handler(void) {
 // ***************************** main code *****************************
 #define TPS_THRES 20
 void loop(void) {
-  gpio_lights = 0; // L_TURN;
-  get_inputs(gpio_lights);
-  set_relays(gpio_lights);
-  
-  // if (state == NO_FAULT) {
+  gpio_lights = get_inputs();
 
-  // } else {
+  if (state != NO_FAULT) {
+    can_lights = 0;
+  }
 
-  // }
+  uint8_t lights = ~gpio_lights | can_lights;
+
+  set_relays(~lights);
+
   watchdog_feed();
 }
 
@@ -360,14 +350,14 @@ int main(void) {
   set_gpio_mode(GPIOC, 7, MODE_INPUT);
   set_gpio_mode(GPIOC, 8, MODE_INPUT);
   set_gpio_mode(GPIOC, 9, MODE_INPUT);
-  set_gpio_pullup(GPIOC, 2, PULL_UP);
-  set_gpio_pullup(GPIOC, 3, PULL_UP);
-  set_gpio_pullup(GPIOC, 4, PULL_UP);
-  set_gpio_pullup(GPIOC, 5, PULL_UP);
-  set_gpio_pullup(GPIOC, 6, PULL_UP);
-  set_gpio_pullup(GPIOC, 7, PULL_UP);
-  set_gpio_pullup(GPIOC, 8, PULL_UP);
-  set_gpio_pullup(GPIOC, 9, PULL_UP);
+  // set_gpio_pullup(GPIOC, 2, PULL_UP);
+  // set_gpio_pullup(GPIOC, 3, PULL_UP);
+  // set_gpio_pullup(GPIOC, 4, PULL_UP);
+  // set_gpio_pullup(GPIOC, 5, PULL_UP);
+  // set_gpio_pullup(GPIOC, 6, PULL_UP);
+  // set_gpio_pullup(GPIOC, 7, PULL_UP);
+  // set_gpio_pullup(GPIOC, 8, PULL_UP);
+  // set_gpio_pullup(GPIOC, 9, PULL_UP);
 
   // setup GPIO outputs
   set_gpio_mode(GPIOA, 4,  MODE_OUTPUT);
@@ -376,20 +366,28 @@ int main(void) {
   set_gpio_mode(GPIOA, 7,  MODE_OUTPUT);
   set_gpio_mode(GPIOB, 0,  MODE_OUTPUT);
   set_gpio_mode(GPIOB, 1,  MODE_OUTPUT);
-  set_gpio_mode(GPIOB, 2,  MODE_OUTPUT);
   set_gpio_mode(GPIOB, 10, MODE_OUTPUT);
+  set_gpio_mode(GPIOB, 12, MODE_OUTPUT);
+  set_gpio_pullup(GPIOA, 4,  PULL_UP);
+  set_gpio_pullup(GPIOA, 5,  PULL_UP);
+  set_gpio_pullup(GPIOA, 6,  PULL_UP);
+  set_gpio_pullup(GPIOA, 7,  PULL_UP);
+  set_gpio_pullup(GPIOB, 0,  PULL_UP);
+  set_gpio_pullup(GPIOB, 1,  PULL_UP);
+  set_gpio_pullup(GPIOB, 10, PULL_UP);
+  set_gpio_pullup(GPIOB, 12, PULL_UP);
   set_gpio_output_type(GPIOA, 4,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOA, 5,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOA, 6,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOA, 7,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 0,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 1,  OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output_type(GPIOB, 2,  OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 10, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
 
+  set_gpio_output(GPIOB, 0, 0);
 
-  // and then i decided to make something nicer. 
-  set_relays(0);
+  set_relays(1);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
   watchdog_init();
