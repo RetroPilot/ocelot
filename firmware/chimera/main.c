@@ -530,7 +530,7 @@ void CAN3_RX0_IRQ_Handler(void) {
     uint64_t can_raw = 0;
 
     // STEER_ANGLE (MSG_TYPE 1)
-    if (steer_angle_major_cfg != NULL && steer_angle_major_cfg->enabled && address == steer_angle_major_cfg->can_id) {
+    if (steer_angle_major_cfg != NULL && (steer_angle_major_cfg->enabled & 1) && address == steer_angle_major_cfg->can_id) {
       for (int i = 0; i < steer_angle_major_cfg->msg_len_bytes; i++) {
         can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
         can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
@@ -541,7 +541,7 @@ void CAN3_RX0_IRQ_Handler(void) {
     }
 
     // STEER_ANGLE (MSG_TYPE 2)
-    if (steer_angle_minor_cfg != NULL && steer_angle_minor_cfg->enabled && address == steer_angle_minor_cfg->can_id) {
+    if (steer_angle_minor_cfg != NULL && (steer_angle_minor_cfg->enabled & 1) && address == steer_angle_minor_cfg->can_id) {
       int32_t angle_frac_raw = 0;
       for (int i = 0; i < steer_angle_minor_cfg->msg_len_bytes; i++) {
         can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
@@ -554,7 +554,7 @@ void CAN3_RX0_IRQ_Handler(void) {
     }
     
     // VEHICLE_SPEED (MSG_TYPE 3)
-    if (vehicle_speed_cfg != NULL && vehicle_speed_cfg->enabled && address == vehicle_speed_cfg->can_id) {
+    if (vehicle_speed_cfg != NULL && (vehicle_speed_cfg->enabled & 1) && address == vehicle_speed_cfg->can_id) {
       for (int i = 0; i < steer_angle_minor_cfg->msg_len_bytes; i++) {
         can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
         can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
@@ -614,7 +614,7 @@ void TIM3_IRQ_Handler(void) {
 
   switch (turn) {
     case 0: { // steer_angle
-      if (steer_angle_major_cfg->enabled){
+      if (steer_angle_major_cfg->enabled & 1){
         uint8_t dat[6];
         dat[5] = ((state & 0xFU) << 4) | pkt_idx1;
         dat[4] = 0;
@@ -637,12 +637,12 @@ void TIM3_IRQ_Handler(void) {
       uint8_t dat[8];
       
       dat[7] = ((state & 0xFU) << 4) | pkt_idx2;
-      dat[6] = (cps_pulse_count >> 0) & 0xFF;
-      dat[5] = (cps_dt_us >> 8) & 0xFF;
-      dat[4] = (cps_dt_us >> 0) & 0xFF;
-      dat[3] = (vss_pulse_count >> 0) & 0xFF;
-      dat[2] = (vss_dt_us >> 8) & 0xFF;
-      dat[1] = (vss_dt_us >> 0) & 0xFF;
+      dat[6] = 0;
+      dat[5] = 0;
+      dat[4] = 0;
+      dat[3] = (cps_pulse_count >> 0) & 0xFF;
+      dat[2] = (cps_dt_us >> 8) & 0xFF;
+      dat[1] = (cps_dt_us >> 0) & 0xFF;
       dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
 
       to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
@@ -651,10 +651,32 @@ void TIM3_IRQ_Handler(void) {
       to_send.RIR = (117 << 21) | 1U;
 
       send_can1_message(&to_send, &pkt_idx2, "CAN MISS2\n");
+
       break;
     }
 
-    case 2: { // CRUISE
+    case 2: {
+      //VSS signal 
+      uint8_t dat[8];
+      dat[7] = ((vehicle_speed_cfg->enabled & 1) << 4) | pkt_idx3;
+      dat[6] = (vss_can >> 8) & 0xFF;
+      dat[5] = (vss_can >> 0) & 0xFF;
+      dat[4] = 0;
+      dat[3] = (vss_pulse_count >> 0) & 0xFF;
+      dat[2] = (vss_dt_us >> 8) & 0xFF;
+      dat[1] = (vss_dt_us >> 0) & 0xFF;
+      dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
+
+      to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
+      to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
+      to_send.RDTR = 8;
+      to_send.RIR = (118 << 21) | 1U;
+      send_can1_message(&to_send, &pkt_idx3, "CAN MISS4\n");
+
+      break;
+    }
+
+    case 3: { // CRUISE
       // TODO: implement this from the ADC readouts
       uint8_t dat[6];
       dat[5] = ((state & 0xFU) << 4) | pkt_idx4;
@@ -671,26 +693,7 @@ void TIM3_IRQ_Handler(void) {
 
       send_can1_message(&to_send, &pkt_idx4, "CAN MISS4\n");
       break;
-    }
-    case 3: { 
-      if(vehicle_speed_cfg->enabled){
-        //if we have a CAN VSS source, send it 
-        uint8_t dat2[8];
-        dat2[5] = ((state & 0xFU) << 4) | pkt_idx3;
-        dat2[4] = 0;
-        dat2[3] = 0;
-        dat2[2] = (vss_can >> 8) & 0xFF;
-        dat2[1] = (vss_can >> 0) & 0xFF;
-        dat2[0] = lut_checksum(dat2, 6, crc8_lut_1d);
-
-        to_send.RDLR = dat2[0] | (dat2[1] << 8) | (dat2[2] << 16) | (dat2[3] << 24);
-        to_send.RDHR = dat2[4] | (dat2[5] << 8);
-        to_send.RDTR = 6;
-        to_send.RIR = (118 << 21) | 1U;
-        send_can1_message(&to_send, &pkt_idx3, "CAN MISS4\n");
       }
-      break;
-    }
     default: {
       break;
     }
@@ -752,6 +755,9 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
   puth(cps_dt_us);
   puts(" VSS_CAN: ");
   puth(vss_can);
+  puts(" cfg enables: ");
+  puth(vehicle_speed_cfg!=NULL);
+  puth(vehicle_speed_cfg->enabled & 1);
   puts("\n");
 
   TIM9->SR = 0;
@@ -792,6 +798,59 @@ void loop(void) {
 }
 
 int main(void) {
+
+  // ############## FLASH HANDLING #####################
+  //config_block_t *cfg = (config_block_t *)CONFIG_FLASH_ADDR; // Pointer to flash content
+
+  uint8_t sig_type_seen[16] = {0};
+  bool needs_format = false; 
+
+  config_block_t current_cfg_in_ram;
+
+  memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
+
+  if (!(current_cfg_in_ram.magic == FLASH_CONFIG_MAGIC &&
+        current_cfg_in_ram.crc32 == crc32(&current_cfg_in_ram.entries[0], sizeof(current_cfg_in_ram.entries)))) {
+    needs_format = true;
+  } else {
+    for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
+      can_signal_config_t *e = &current_cfg_in_ram.entries[i]; 
+      if (!e->enabled) continue; 
+      if (e->sig_type >= 16) {
+        needs_format = true;
+        break;
+      }
+      if (sig_type_seen[e->sig_type]) {
+        needs_format = true;
+        break; 
+      }
+      sig_type_seen[e->sig_type] = 1; 
+    }
+  }
+
+  if (needs_format) {
+    flash_unlock();
+    flash_config_format();
+    flash_lock();
+    flash_configured = 0;
+    NVIC_SystemReset();
+  } else {
+    flash_configured = 1;
+    for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
+      can_signal_config_t *e = &current_cfg_in_ram.entries[i];
+      if (!e->enabled) continue;
+
+      switch (e->sig_type) {
+        case 1: steer_angle_major_cfg = e; puts("steer angle major configured.\n"); break;
+        case 2: steer_angle_minor_cfg = e; puts("steer angle minor configured.\n");break;
+        case 3: vehicle_speed_cfg = e;puts("vehicle speed configured.\n"); break;
+        default: break;
+      }
+    }
+  }
+
+  // ###################################################################
+
   // Init interrupt table
   init_interrupts(true);
 
@@ -856,58 +915,6 @@ int main(void) {
   if (!llcan_speed_set) {
     puts("Failed to set llcan3 speed");
   }
-
-  // ############## FLASH HANDLING #####################
-  //config_block_t *cfg = (config_block_t *)CONFIG_FLASH_ADDR; // Pointer to flash content
-
-  uint8_t sig_type_seen[16] = {0};
-  bool needs_format = false; 
-
-  config_block_t current_cfg_in_ram;
-
-  memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
-
-  if (!(current_cfg_in_ram.magic == FLASH_CONFIG_MAGIC &&
-        current_cfg_in_ram.crc32 == crc32(&current_cfg_in_ram.entries[0], sizeof(current_cfg_in_ram.entries)))) {
-    needs_format = true;
-  } else {
-    for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
-      can_signal_config_t *e = &current_cfg_in_ram.entries[i]; 
-      if (!e->enabled) continue; 
-      if (e->sig_type >= 16) {
-        needs_format = true;
-        break;
-      }
-      if (sig_type_seen[e->sig_type]) {
-        needs_format = true;
-        break; 
-      }
-      sig_type_seen[e->sig_type] = 1; 
-    }
-  }
-
-  if (needs_format) {
-    flash_unlock();
-    flash_config_format();
-    flash_lock();
-    flash_configured = 0;
-    NVIC_SystemReset();
-  } else {
-    flash_configured = 1;
-    for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
-      can_signal_config_t *e = &current_cfg_in_ram.entries[i];
-      if (!e->enabled) continue;
-
-      switch (e->sig_type) {
-        case 1: steer_angle_major_cfg = e; puts("steer angle major configured.\n"); break;
-        case 2: steer_angle_minor_cfg = e; puts("steer angle minor configured.\n");break;
-        case 3: vehicle_speed_cfg = e;puts("vehicle speed configured.\n"); break;
-        default: break;
-      }
-    }
-  }
-
-  // ###################################################################
 
   bool ret = llcan_init(CAN1);
   UNUSED(ret);
