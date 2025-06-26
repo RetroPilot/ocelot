@@ -91,6 +91,11 @@ projects = {
   "main": "smart_ascm/main.c",
   "startup": "startup_stm32f413xx.s",
   "flags": PROJECT_FLAGS_F4
+  },
+  "chimera": {
+  "main": "chimera/main.c",
+  "startup": "startup_stm32f413xx.s",
+  "flags": PROJECT_FLAGS_F4
   }
 }
 
@@ -181,7 +186,7 @@ def Build(env, gitversion, PROJECT, PROJECT_FLAGS, MAIN, STARTUP_FILE):
     panda_env.Object(f"{project_obj_dir}/{PROJECT}_{os.path.basename(src).replace('.c', '.o')}", src) 
     for src in crypto_sources
   ]
-
+  
   bootstub_obj = panda_env.Object(f"{project_obj_dir}/{PROJECT}_bootstub.o", "bootstub.c")
 
   bootstub_elf = panda_env.Program(f"{project_obj_dir}/bootstub.{PROJECT}.elf", [startup] + crypto_objects + [bootstub_obj])

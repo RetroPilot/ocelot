@@ -180,9 +180,9 @@ uint8_t get_inputs(void){
 
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN->RF0R & CAN_RF0R_FMP0) != 0) {
-    #ifdef DEBUG
-      puts("CAN RX\n");
-    #endif
+    // #ifdef DEBUG
+    //   puts("CAN RX\n");
+    // #endif
     int address = CAN->sFIFOMailBox[0].RIR >> 21;
     if (address == CAN_INPUT) {
       // softloader entry
@@ -208,6 +208,8 @@ void CAN1_RX0_IRQ_Handler(void) {
       uint8_t index = dat[3] & COUNTER_CYCLE;
       if (dat[0] == lut_checksum(dat, CAN_SIZE, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
+          timeout = 0;
+          state = NO_FAULT;
           if (enable) {
             can_lights = value_0;
           } else {
@@ -219,8 +221,6 @@ void CAN1_RX0_IRQ_Handler(void) {
             }
             can_lights = 0;
           }
-          // clear the timeout
-          timeout = 0;
         }
         current_index = index;
       } else {
@@ -272,9 +272,14 @@ void TIM3_IRQ_Handler(void) {
   } else {
     timeout += 1U;
   }
+  timeout &= 0xFFU; // keep it in bounds
 
   #ifdef DEBUG
+  puts("STATE: ");
+  puth(state);
+  puts(" GPIO: ");
   puth(gpio_lights);
+  puts(" CAN: ");
   puth(can_lights);
   puts("\n");
   #endif

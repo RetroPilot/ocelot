@@ -6,7 +6,7 @@ import time
 import select
 import codecs
 
-from panda import Panda
+from firmware.python import Panda
 
 setcolor = ["\033[1;32;40m", "\033[1;31;40m"]
 unsetcolor = "\033[00m"
@@ -52,6 +52,23 @@ if __name__ == "__main__":
               break
           if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
             ln = sys.stdin.readline()
+            if ln == "h\n":
+              h = panda.health()
+              print(h)
+            elif ln == "r\n":
+              panda.reset()
+            elif ln == "flashwrite0\n":
+              panda.flash_config_write(0, 37, 8, 1, 48, 12, 0, 15, 0, 1)
+            elif ln == "flashwrite1\n":
+              panda.flash_config_write(1, 37, 8, 2, 28, 4, 0, 1, 0, 1)
+            elif ln == "flashwrite2\n":
+              panda.flash_config_write(2, 180, 8, 3, 8, 16, 0, 1, 0, 1)
+            elif ln == "flashread\n":
+              ret = panda.flash_config_read()
+              for r in ret:
+                print(r)
+            elif ln == "flashwipe\n":
+              panda.flash_wipe_config()
             if claim:
               panda.serial_write(port_number, ln)
           time.sleep(0.01)

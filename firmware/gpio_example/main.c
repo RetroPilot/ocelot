@@ -23,7 +23,7 @@
 #include "drivers/pwm.h"
 
 // addresses
-#define OUTPUT_ADDRESS 0x201
+#define OUTPUT_ADDRESS 37
 #define INPUT_ADDRESS 0x200
 
 // uncomment for usb debugging via debug_console.py
@@ -338,13 +338,13 @@ void CAN2_SCE_IRQ_Handler(void) {
 void CAN3_RX0_IRQ_Handler(void) {
   while ((CAN3->RF0R & CAN_RF0R_FMP0) != 0) {
     uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
-    #ifdef DEBUG_CAN
+    // #ifdef DEBUG_CAN
     puts("CAN1 RX: ");
     puth(address);
     puts("\n");
-    #else
-    UNUSED(address);
-    #endif
+    // #else
+    // UNUSED(address);
+    // #endif
     // next
     can_rx(2);
   }
@@ -367,20 +367,36 @@ void TIM3_IRQ_Handler(void) {
 
   // send to EON
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[6];
-    dat[5] = ((state & 0xFU) << 4) | pkt_idx;
-    dat[4] = (gas_set_1 >> 8) & 0xFF;
-    dat[3] = (gas_set_1 >> 0) & 0xFF;
-    dat[2] = (gas_set_0 >> 8) & 0xFF;
-    dat[1] = (gas_set_0 >> 0) & 0xFF;
-    dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
+    // ANGLE
+    // start bit 3
+    // len 12
+    // scale factor 1.5
+    // FRACTION
+    // start bit 39
+    // len 4
+    // full steeer_angle msg = (ANGLE * 1.5) + (FRACTION * 0.1) = 159.6
+    uint16_t steer_angle = 0x1E0; // 159 final
+    uint8_t fraction = 0x06; // 0.6 final
+    uint8_t dat[8];
+    dat[7] = 0;
+    dat[6] = 0x5A;
+    dat[5] = 0x1C; //((state & 0xFU) << 4) | pkt_idx;
+    dat[4] = (fraction & 0xF) << 4U; //(gas_set_1 >> 8) & 0xFF;
+    dat[3] = 0; //(gas_set_1 >> 0) & 0xFF;
+    dat[2] = 0; //(gas_set_0 >> 8) & 0xFF;
+    dat[1] = (steer_angle) & 0xFF; //(gas_set_0 >> 0) & 0xFF;
+    dat[0] = ((steer_angle >> 8U) & 0xF); //lut_checksum(dat, 6, crc8_lut_1d);
 
     CAN_FIFOMailBox_TypeDef to_send;
     to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4] | (dat[5] << 8);
-    to_send.RDTR = 6;
-    to_send.RIR = (OUTPUT_ADDRESS << 21) | 1U;
+    to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
+    to_send.RDTR = 8;
+    to_send.RIR = (180 << 21) | 1U;
     can_send(&to_send, 0, false);
+
+    to_send.RIR = (37 << 21) | 1U;
+    can_send(&to_send, 0, false);
+
     pkt_idx++;
     pkt_idx &= COUNTER_CYCLE;
   }
@@ -429,9 +445,9 @@ int main(void) {
   // REGISTER_INTERRUPT(CAN2_TX_IRQn, CAN2_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
   // REGISTER_INTERRUPT(CAN2_RX0_IRQn, CAN2_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
   // REGISTER_INTERRUPT(CAN2_SCE_IRQn, CAN2_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_2)
-  // REGISTER_INTERRUPT(CAN3_TX_IRQn, CAN3_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
-  // REGISTER_INTERRUPT(CAN3_RX0_IRQn, CAN3_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
-  // REGISTER_INTERRUPT(CAN3_SCE_IRQn, CAN3_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
+  REGISTER_INTERRUPT(CAN3_TX_IRQn, CAN3_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
+  REGISTER_INTERRUPT(CAN3_RX0_IRQn, CAN3_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
+  REGISTER_INTERRUPT(CAN3_SCE_IRQn, CAN3_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
 
   // Should run at around 732Hz (see init below)
   REGISTER_INTERRUPT(TIM3_IRQn, TIM3_IRQ_Handler, 1000U, FAULT_INTERRUPT_RATE_TIM3)

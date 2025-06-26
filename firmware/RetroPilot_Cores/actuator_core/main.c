@@ -286,15 +286,26 @@ void CAN1_RX0_IRQ_Handler(void) {
             // TODO: we gotta get this outta here!
             set_gpio_output(GPIOB, 4, 0); // CLUTCH
             gas_set = value_0;
-            //uint32_t lower_deadzone = TPS_MIN + gas_set - TPS_THRES;
-            //uint32_t upper_deadzone = TPS_MIN + gas_set + TPS_THRES;
-            set_gpio_output(GPIOB, 10, 0); // DIS
-            set_gpio_output(GPIOA, 2, 1); // PWM
-            set_gpio_output(GPIOB, 0, 1); // DIR
-            // deadzone check
-            set_gpio_output(GPIOB, 3,  0); 
-            set_gpio_output(GPIOA, 3,  1);
-            set_gpio_output(GPIOB, 1,  0); // DIR
+            if (gas_set > 0){ 
+              //uint32_t lower_deadzone = TPS_MIN + gas_set - TPS_THRES;
+              //uint32_t upper_deadzone = TPS_MIN + gas_set + TPS_THRES;
+              set_gpio_output(GPIOB, 10, 0); // DIS
+              set_gpio_output(GPIOA, 2, 1); // PWM
+              set_gpio_output(GPIOB, 0, 1); // DIR
+              // deadzone check
+              set_gpio_output(GPIOB, 3,  0); 
+              set_gpio_output(GPIOA, 3,  1);
+              set_gpio_output(GPIOB, 1,  0); // DIR
+            } else {
+              set_gpio_output(GPIOB, 4, 1); // CLUTCH
+              set_gpio_output(GPIOA, 2, 0); // PWM
+              set_gpio_output(GPIOB, 10, 0); // DIS
+              set_gpio_output(GPIOB, 0, 1); // DIR
+  
+              set_gpio_output(GPIOB, 3,  1);
+              set_gpio_output(GPIOA, 3,  0);
+              set_gpio_output(GPIOB, 1,  1);
+            }
 
             /*
             if (pdl0 >= lower_deadzone && pdl0 <= upper_deadzone) {

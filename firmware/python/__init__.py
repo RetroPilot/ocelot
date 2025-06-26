@@ -661,3 +661,69 @@ class Panda(object):
   # ****************** Debug *****************
   def set_green_led(self, enabled):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xf7, int(enabled), 0, b'')
+
+  # # ************ set relay chimera ***********
+  # def set_relay_pwr(self, enabled):
+  #   self._handle.controlWrite(Panda.REQUEST_OUT, 0xb4, int(enabled), 0, b'')
+
+  # # ************ set relay chimera ***********
+  # def set_ign_obdc(self, enabled):
+  #   self._handle.controlWrite(Panda.REQUEST_OUT, 0xb5, int(enabled), 0, b'')
+
+  def flash_wipe_config(self):
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xFD, 0, 0, b'')
+
+  def flash_config_write(self, index, can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled):
+    # Write a config entry to flash.
+    # :param index: entry index (0-15)
+    # :param msg_type: signal type (0-4)
+    # :param start_bit: signal start bit
+    # :param end_bit: signal end bit
+    # :param enabled: 1 to enable
+    # :param can_id: 11/29-bit CAN ID
+    # :param scale_mult: multiplier * 1000
+    # :param scale_offs: offset * 1000
+    assert 0 <= index < 16
+    dat = struct.pack("<IBBBBBhiB", can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled)
+    print(dat)
+    self.send_heartbeat()
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
+
+  def flash_config_read(self):
+    import struct
+
+    MAX_CONFIG_ENTRIES = 16
+    ENTRY_SIZE = 16
+    HEADER_SIZE = 4  # magic
+    CRC_SIZE = 4
+    TOTAL_SIZE = HEADER_SIZE + ENTRY_SIZE * MAX_CONFIG_ENTRIES + CRC_SIZE
+    CHUNK_SIZE = 64
+
+    raw = bytearray()
+    for offset in range(0, TOTAL_SIZE, CHUNK_SIZE):
+      chunk = self._handle.controlRead(Panda.REQUEST_IN, 0xFF, offset, 0, CHUNK_SIZE)
+      # time.sleep(0.5)
+      raw += chunk
+
+    magic, = struct.unpack_from("<I", raw, 0)
+    if magic != 0xDEADBEEF:
+      raise ValueError("Invalid config magic")
+
+    entries = []
+    for i in range(MAX_CONFIG_ENTRIES):
+      offset = HEADER_SIZE + i * ENTRY_SIZE
+      can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled= struct.unpack_from("<IBBBBBhiB", raw, offset)
+      entries.append({
+        "index": i,
+        "can_id": can_id,
+        "sig_len_bytes" : sig_len_bytes,
+        "msg_type": msg_type,
+        "shift_amt": shift_amt,
+        "msg_len": msg_len,
+        "endianness": endian,
+        "scale_mult": scale_mult,
+        "scale_offs": scale_offs,
+        "enabled" : enabled
+      })
+    return entries
+  
