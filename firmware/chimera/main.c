@@ -21,13 +21,13 @@
 #include "crc.h"
 
 #include "obj/gitversion.h"
+
+#include "drivers/uart.h"
+#include "chimera/usb.h"
+#include "chimera/can.h"
 #include "chimera/chimera.h"
 
 extern int _app_start[0xc000];
-
-// addresses
-#define OUTPUT_ADDRESS 0x201
-#define INPUT_ADDRESS 0x200
 
 // uncomment for usb debugging via debug_console.py
 #define DEBUG
@@ -35,10 +35,6 @@ extern int _app_start[0xc000];
 
 // functions
 #define min(a,b)            (((a) < (b)) ? (a) : (b))
-
-#include "drivers/uart.h"
-#include "chimera/usb.h" // Ensure this header defines necessary USB types/functions
-#include "chimera/can.h"
 
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
@@ -60,19 +56,20 @@ volatile uint16_t cps_dt_us = 0;
 volatile uint32_t vss_last_us = 0;
 volatile uint32_t cps_last_us = 0;
 
+uint32_t adc1 = 0;
+uint32_t adc2 = 0;
+
 bool controls_allowed = false;
-uint8_t current_safety_mode = 17U;
-int16_t current_safety_param = 0;
-uint8_t relay_on = 0;
-uint8_t ignition_on = 0;
+bool relay_on = 0;
+bool ignition_on = 0;
+
+bool ignition_line = 0;
+bool brake_pressed = 0;
 
 bool flash_configured = 0;
+uint32_t steer_angle_rate = 0;
 uint32_t steer_angle = 0;
 uint32_t vss_can = 0;
-
-const can_signal_config_t *steer_angle_major_cfg = NULL;
-const can_signal_config_t *steer_angle_minor_cfg = NULL;
-const can_signal_config_t *vehicle_speed_cfg = NULL;
 
 struct __attribute__((packed)) health_t {
   uint32_t uptime_pkt;
@@ -95,67 +92,6 @@ struct __attribute__((packed)) health_t {
   uint8_t power_save_enabled_pkt;
 };
 
-// ********************** flash write **********************
-void flash_unlock(void);
-void flash_lock(void);
-void flash_erase_sector(uint8_t sector);
-void flash_write_word(uint32_t addr, uint32_t val);
-void flash_config_format(void);
-uint32_t crc32(const void *data, size_t len);
-
-#define CHIMERA
-// Global/static variables to hold setup packet details for deferred processing
-static USB_Setup_TypeDef last_setup_pkt;
-static uint8_t *last_usb_data_ptr = NULL; // Points to the buffer provided by USB driver
-volatile bool config_write_pending = false; // Flag to indicate a pending config write
-
-// This function will handle the actual flash write.
-// It should be called when EP0 OUT data transfer is complete.
-void handle_deferred_config_write(void) {
-  if (!config_write_pending) {
-    return; // No pending write
-  }
-
-  // Clear the flag immediately to prevent re-entry
-  config_write_pending = false;
-
-  puts("Executing deferred config write.\n");
-
-  if (last_setup_pkt.b.wLength.w == sizeof(can_signal_config_t) &&
-      last_setup_pkt.b.wValue.w < MAX_CONFIG_ENTRIES &&
-      last_usb_data_ptr != NULL) {
-
-    can_signal_config_t *new_entry = (can_signal_config_t *)last_usb_data_ptr;
-    config_block_t current;
-
-    // Load existing config
-    memcpy(&current, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
-
-    // Update entry with the now-complete data
-    current.entries[last_setup_pkt.b.wValue.w] = *new_entry;
-    current.magic = FLASH_CONFIG_MAGIC;
-    current.crc32 = crc32(&current.entries[0], sizeof(current.entries));
-
-    // Write to flash
-    flash_unlock();
-    flash_erase_sector(CONFIG_FLASH_SECTOR);
-    for (uint32_t i = 0; i < sizeof(config_block_t); i += 4) {
-      flash_write_word(CONFIG_FLASH_ADDR + i,
-                      *(uint32_t *)((uint8_t *)&current + i));
-    }
-    flash_lock();
-
-    puts("Wrote config entry successfully.\n");
-
-  }
-  // Clear the usbdata buffer after the write is complete
-  if (last_usb_data_ptr != NULL) {
-    memset(last_usb_data_ptr, 0, last_setup_pkt.b.wLength.w);
-    last_usb_data_ptr = NULL; // Invalidate pointer
-  }
-}
-
-
 // ********************* usb debugging *********************
 int get_health_pkt(void *dat) {
   COMPILE_TIME_ASSERT(sizeof(struct health_t) <= MAX_RESP_LEN);
@@ -165,10 +101,10 @@ int get_health_pkt(void *dat) {
   health->voltage_pkt = 0;
   health->current_pkt = 0;
 
-  health->ignition_line_pkt = (uint8_t)(current_board->check_ignition());
+  health->ignition_line_pkt = (uint8_t)ignition_line;
   health->ignition_can_pkt = (uint8_t)(ignition_can);
 
-  health->controls_allowed_pkt = 1;
+  health->controls_allowed_pkt = (uint8_t)(controls_allowed);
   health->gas_interceptor_detected_pkt = 0;
   health->can_rx_errs_pkt = can_rx_errs;
   health->can_send_errs_pkt = can_send_errs;
@@ -176,9 +112,9 @@ int get_health_pkt(void *dat) {
   health->gmlan_send_errs_pkt = 0;
   health->car_harness_status_pkt = car_harness_status;
   health->usb_power_mode_pkt = usb_power_mode;
-  health->safety_mode_pkt = (uint8_t)(current_safety_mode);
-  health->safety_param_pkt = current_safety_param;
-  health->power_save_enabled_pkt = (uint8_t)(0);
+  health->safety_mode_pkt = 17;
+  health->safety_param_pkt = 0;
+  health->power_save_enabled_pkt = 0;
 
   health->fault_status_pkt = fault_status;
   health->faults_pkt = faults;
@@ -474,9 +410,6 @@ uint8_t state = FAULT_STARTUP;
 const uint8_t crc_poly = 0x1D;  // standard crc8 SAE J1850
 uint8_t crc8_lut_1d[256];
 
-uint16_t gas_set_0 = 0;
-uint16_t gas_set_1 = 0;
-
 // CAN 1 read function
 // this is where you read in data from CAN 1 and set variables
 void CAN1_RX0_IRQ_Handler(void) {
@@ -540,7 +473,7 @@ void CAN3_RX0_IRQ_Handler(void) {
       steer_angle += steer_angle_major_cfg->scale_offs;
     }
 
-    // STEER_ANGLE (MSG_TYPE 2)
+    // STEER_ANGLE_FRAC (MSG_TYPE 2)
     if (steer_angle_minor_cfg != NULL && (steer_angle_minor_cfg->enabled & 1) && address == steer_angle_minor_cfg->can_id) {
       int32_t angle_frac_raw = 0;
       for (int i = 0; i < steer_angle_minor_cfg->msg_len_bytes; i++) {
@@ -552,8 +485,19 @@ void CAN3_RX0_IRQ_Handler(void) {
       angle_frac_raw += steer_angle_minor_cfg->scale_offs;
       steer_angle += angle_frac_raw;
     }
+
+    // STEER_ANGLE_RATE (MSG_TYPE 3)
+    if (steer_angle_rate_cfg != NULL && (steer_angle_rate_cfg->enabled & 1) && address == steer_angle_rate_cfg->can_id) {
+      for (int i = 0; i < steer_angle_rate_cfg->msg_len_bytes; i++) {
+        can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
+        can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
+      }
+      steer_angle_rate = (can_raw >> steer_angle_rate_cfg->shift_amt) & ((1 << steer_angle_rate_cfg->sig_len) - 1);
+      steer_angle_rate = (steer_angle_rate * steer_angle_rate_cfg->scale_mult);
+      steer_angle_rate += steer_angle_rate_cfg->scale_offs;
+    }
     
-    // VEHICLE_SPEED (MSG_TYPE 3)
+    // VEHICLE_SPEED (MSG_TYPE 4)
     if (vehicle_speed_cfg != NULL && (vehicle_speed_cfg->enabled & 1) && address == vehicle_speed_cfg->can_id) {
       for (int i = 0; i < steer_angle_minor_cfg->msg_len_bytes; i++) {
         can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
@@ -617,8 +561,8 @@ void TIM3_IRQ_Handler(void) {
       if (steer_angle_major_cfg->enabled & 1){
         uint8_t dat[6];
         dat[5] = ((state & 0xFU) << 4) | pkt_idx1;
-        dat[4] = 0;
-        dat[3] = 0;
+        dat[4] = (steer_angle_rate >> 8) & 0xFF;
+        dat[3] = (steer_angle_rate >> 0) & 0xFF;
         dat[2] = (steer_angle >> 8) & 0xFF;
         dat[1] = (steer_angle >> 0) & 0xFF;
         dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
@@ -678,17 +622,19 @@ void TIM3_IRQ_Handler(void) {
 
     case 3: { // CRUISE
       // TODO: implement this from the ADC readouts
-      uint8_t dat[6];
-      dat[5] = ((state & 0xFU) << 4) | pkt_idx4;
-      dat[4] = 0;
-      dat[3] = 0;
+      uint8_t dat[8];
+      dat[7] = ((state & 0xFU) << 4) | pkt_idx4;
+      dat[6] = (adc2 >> 8) & 0xFF;
+      dat[5] = (adc2 >> 0) & 0xFF;
+      dat[4] = (adc1 >> 8) & 0xFF;
+      dat[3] = (adc1 >> 0) & 0xFF;
       dat[2] = 0;
       dat[1] = 0;
-      dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
+      dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
 
       to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-      to_send.RDHR = dat[4] | (dat[5] << 8);
-      to_send.RDTR = 6;
+      to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
+      to_send.RDTR = 8;
       to_send.RIR = (256 << 21) | 1U;
 
       send_can1_message(&to_send, &pkt_idx4, "CAN MISS4\n");
@@ -715,15 +661,12 @@ void TIM3_IRQ_Handler(void) {
 uint8_t loop_counter = 0U;
 void TIM1_BRK_TIM9_IRQ_Handler(void) {
   if (TIM9->SR != 0) {
-
     // decimated to 1Hz
     if(loop_counter == 0U){
-
       // increase heartbeat counter and cap it at the uint32 limit
       if (heartbeat_counter < __UINT32_MAX__) {
         heartbeat_counter += 1U;
       }
-
       // if the heartbeat has been gone for a while, go to SILENT safety mode and enter power save
       if (heartbeat_counter >= 2) {
         // puts("heartbeat not seen for 0x");
@@ -738,28 +681,10 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
       check_registers();
       uptime_cnt += 1U;
       uptime_cnt &= 0xFFFF;
-
     }
     loop_counter++;
     loop_counter %= 8U;
   }
-
-  puts(" angle_: ");
-  puth(steer_angle);
-  puts("\n");
-  puts("VSS CNT: ");
-  puth(vss_pulse_count);
-  puts(" VSS: ");
-  puth(vss_dt_us);
-  puts(" CPS: ");
-  puth(cps_dt_us);
-  puts(" VSS_CAN: ");
-  puth(vss_can);
-  puts(" cfg enables: ");
-  puth(vehicle_speed_cfg!=NULL);
-  puth(vehicle_speed_cfg->enabled & 1);
-  puts("\n");
-
   TIM9->SR = 0;
 }
 
@@ -792,7 +717,11 @@ void EXTI9_5_IRQ_Handler(void) {
 
 // This function is the main application. It is run in a while loop from main() and is interrupted by those specified in main().
 void loop(void) {
+  adc1 = adc_get(12); // ADC1
+  adc2 = adc_get(13);  // ADC2
   // read/write
+  ignition_line = get_gpio_input(GPIOA, 3);
+  brake_pressed = get_gpio_input(GPIOA, 6);
   set_gpio_output(GPIOB, 0, relay_on);
   watchdog_feed();
 }
@@ -800,35 +729,10 @@ void loop(void) {
 int main(void) {
 
   // ############## FLASH HANDLING #####################
-  //config_block_t *cfg = (config_block_t *)CONFIG_FLASH_ADDR; // Pointer to flash content
-
-  uint8_t sig_type_seen[16] = {0};
-  bool needs_format = false; 
-
   config_block_t current_cfg_in_ram;
-
   memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
 
-  if (!(current_cfg_in_ram.magic == FLASH_CONFIG_MAGIC &&
-        current_cfg_in_ram.crc32 == crc32(&current_cfg_in_ram.entries[0], sizeof(current_cfg_in_ram.entries)))) {
-    needs_format = true;
-  } else {
-    for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
-      can_signal_config_t *e = &current_cfg_in_ram.entries[i]; 
-      if (!e->enabled) continue; 
-      if (e->sig_type >= 16) {
-        needs_format = true;
-        break;
-      }
-      if (sig_type_seen[e->sig_type]) {
-        needs_format = true;
-        break; 
-      }
-      sig_type_seen[e->sig_type] = 1; 
-    }
-  }
-
-  if (needs_format) {
+  if (!validate_flash_config(&current_cfg_in_ram)) {
     flash_unlock();
     flash_config_format();
     flash_lock();
@@ -836,19 +740,8 @@ int main(void) {
     NVIC_SystemReset();
   } else {
     flash_configured = 1;
-    for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
-      can_signal_config_t *e = &current_cfg_in_ram.entries[i];
-      if (!e->enabled) continue;
-
-      switch (e->sig_type) {
-        case 1: steer_angle_major_cfg = e; puts("steer angle major configured.\n"); break;
-        case 2: steer_angle_minor_cfg = e; puts("steer angle minor configured.\n");break;
-        case 3: vehicle_speed_cfg = e;puts("vehicle speed configured.\n"); break;
-        default: break;
-      }
-    }
+    init_config_pointers(&current_cfg_in_ram);
   }
-
   // ###################################################################
 
   // Init interrupt table
@@ -899,6 +792,8 @@ int main(void) {
   USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOVAL;
   USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOEN;
   usb_init();
+
+  adc_init();
 
   puts("INIT\n");
 
