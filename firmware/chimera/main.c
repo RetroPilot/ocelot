@@ -49,6 +49,8 @@ void __attribute__ ((noinline)) enable_fpu(void) {
   FPU->FPCCR |= (FPU_FPCCR_ASPEN_Msk | FPU_FPCCR_LSPEN_Msk);
 }
 
+bool flash_configured = 0;
+
 volatile uint32_t vss_pulse_count = 0;
 volatile uint32_t cps_pulse_count = 0;
 volatile uint16_t vss_dt_us = 0;
@@ -56,20 +58,28 @@ volatile uint16_t cps_dt_us = 0;
 volatile uint32_t vss_last_us = 0;
 volatile uint32_t cps_last_us = 0;
 
-uint32_t adc1 = 0;
-uint32_t adc2 = 0;
+uint32_t adc[2];
+uint32_t adc_cmp = 0;
 
 bool controls_allowed = false;
 bool relay_on = 0;
 bool ignition_on = 0;
 
 bool ignition_line = 0;
+bool relay_req_obdc = 0;
+bool relay_req_usb = 0;
 bool brake_pressed = 0;
 
-bool flash_configured = 0;
 uint32_t steer_angle_rate = 0;
 uint32_t steer_angle = 0;
 uint32_t vss_can = 0;
+uint32_t engine_rpm_can = 0;
+bool brake_pressed_can = 0;
+
+// can be read from CAN or ADC, depending on flash configuration
+bool buttons[4];
+
+uint8_t ignition_cnt = 0;
 
 struct __attribute__((packed)) health_t {
   uint32_t uptime_pkt;
@@ -131,7 +141,7 @@ void debug_ring_callback(uart_ring *ring) {
 
 // callback function to handle flash writes over USB
 void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
-  if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(can_signal_config_t))) {
+  if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(flash_config_t))) {
     handle_deferred_config_write();
   }
 }
@@ -284,9 +294,9 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
     case 0xdc:
       // set safety mode
       if (setup->b.wValue.w == 0 || setup->b.wValue.w == 3 || setup->b.wValue.w == 19){
-        relay_on = 0;
+        relay_req_usb = 0;
       } else {
-        relay_on = 1;
+        relay_req_usb = 1;
       }
       break;
     // 0xde: Set CAN bitrate (optional, or can remove if bitrate fixed)
@@ -332,10 +342,13 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
     }
     case 0xFE: {  // Write config entry
       puts("0xFE command received. Deferring write...\n");
-      if (setup->b.wLength.w == sizeof(can_signal_config_t) &&
+      if (setup->b.wLength.w == sizeof(flash_config_t) &&
           setup->b.wValue.w < MAX_CONFIG_ENTRIES) {
         config_write_pending = true;
       } else {
+        puth(setup->b.wLength.w);
+        puth(sizeof(flash_config_t));
+        puth(setup->b.wValue.w);
         puts("0xFE command: Invalid length or index. Not deferring.\n");
       }
       break;
@@ -451,7 +464,6 @@ void CAN2_RX0_IRQ_Handler(void) {
 }
 
 void CAN2_SCE_IRQ_Handler(void) {
-  // state = FAULT_SCE;
   // can_sce(CAN2);
   llcan_clear_send(CAN2);
 }
@@ -460,52 +472,41 @@ void CAN2_SCE_IRQ_Handler(void) {
 void CAN3_RX0_IRQ_Handler(void) {
   while ((CAN3->RF0R & CAN_RF0R_FMP0) != 0) {
     uint16_t address = CAN3->sFIFOMailBox[0].RIR >> 21;
-    uint64_t can_raw = 0;
+    const flash_config_t *cfg = NULL;
 
-    // STEER_ANGLE (MSG_TYPE 1)
-    if (steer_angle_major_cfg != NULL && (steer_angle_major_cfg->enabled & 1) && address == steer_angle_major_cfg->can_id) {
-      for (int i = 0; i < steer_angle_major_cfg->msg_len_bytes; i++) {
-        can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
-        can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-      }
-      steer_angle = (can_raw >> steer_angle_major_cfg->shift_amt) & ((1 << steer_angle_major_cfg->sig_len) - 1);
-      steer_angle = (steer_angle * steer_angle_major_cfg->scale_mult);
-      steer_angle += steer_angle_major_cfg->scale_offs;
+    cfg = signal_configs[1]; // STEER_ANGLE
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      steer_angle = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
     }
 
-    // STEER_ANGLE_FRAC (MSG_TYPE 2)
-    if (steer_angle_minor_cfg != NULL && (steer_angle_minor_cfg->enabled & 1) && address == steer_angle_minor_cfg->can_id) {
-      int32_t angle_frac_raw = 0;
-      for (int i = 0; i < steer_angle_minor_cfg->msg_len_bytes; i++) {
-        can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
-        can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-      }
-      angle_frac_raw = (can_raw >> steer_angle_minor_cfg->shift_amt) & ((1 << steer_angle_minor_cfg->sig_len) - 1);
-      angle_frac_raw = (angle_frac_raw * steer_angle_minor_cfg->scale_mult);
-      angle_frac_raw += steer_angle_minor_cfg->scale_offs;
-      steer_angle += angle_frac_raw;
+    cfg = signal_configs[2]; // STEER_ANGLE_FRAC
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      steer_angle += extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
     }
 
-    // STEER_ANGLE_RATE (MSG_TYPE 3)
-    if (steer_angle_rate_cfg != NULL && (steer_angle_rate_cfg->enabled & 1) && address == steer_angle_rate_cfg->can_id) {
-      for (int i = 0; i < steer_angle_rate_cfg->msg_len_bytes; i++) {
-        can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
-        can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-      }
-      steer_angle_rate = (can_raw >> steer_angle_rate_cfg->shift_amt) & ((1 << steer_angle_rate_cfg->sig_len) - 1);
-      steer_angle_rate = (steer_angle_rate * steer_angle_rate_cfg->scale_mult);
-      steer_angle_rate += steer_angle_rate_cfg->scale_offs;
+    cfg = signal_configs[3]; // STEER_ANGLE_RATE
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      steer_angle_rate = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
     }
-    
-    // VEHICLE_SPEED (MSG_TYPE 4)
-    if (vehicle_speed_cfg != NULL && (vehicle_speed_cfg->enabled & 1) && address == vehicle_speed_cfg->can_id) {
-      for (int i = 0; i < steer_angle_minor_cfg->msg_len_bytes; i++) {
-        can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
-        can_raw |= GET_BYTE(&CAN3->sFIFOMailBox[0], i);
-      }
-      vss_can = (can_raw >> vehicle_speed_cfg->shift_amt) & ((1 << vehicle_speed_cfg->sig_len) - 1);
-      vss_can = (vss_can * vehicle_speed_cfg->scale_mult);
-      vss_can += vehicle_speed_cfg->scale_offs;
+
+    cfg = signal_configs[4]; // VEHICLE_SPEED
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      vss_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
+    }
+
+    cfg = signal_configs[5]; // IGNITION_CAN
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      ignition_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
+    }
+
+    cfg = signal_configs[6]; // ENGINE_RPM_CAN
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      engine_rpm_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
+    }
+
+    cfg = signal_configs[7]; // BRAKE_PRESSED
+    if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
+      brake_pressed_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
     }
 
     can_rx(2);
@@ -513,12 +514,11 @@ void CAN3_RX0_IRQ_Handler(void) {
   }
 }
 void CAN3_SCE_IRQ_Handler(void) {
-  // state = FAULT_SCE;
   // can_sce(CAN3);
   llcan_clear_send(CAN3);
 }
 
-static void send_can1_message(CAN_FIFOMailBox_TypeDef *to_send, uint8_t *pkt_idx, const char *miss_tag) {
+static void send_can1_message(CAN_FIFOMailBox_TypeDef *to_send, uint8_t *pkt_idx) {
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
     CAN1->sTxMailBox[0].TDTR = to_send->RDTR;
     CAN1->sTxMailBox[0].TDLR = to_send->RDLR;
@@ -536,17 +536,16 @@ static void send_can1_message(CAN_FIFOMailBox_TypeDef *to_send, uint8_t *pkt_idx
     CAN1->sTxMailBox[2].TIR = to_send->RIR | CAN_TI2R_TXRQ;
   } else {
     state = FAULT_SEND;
-    puts(miss_tag);
-    puts("CAN1 TSR: ");
-    puth(CAN1->TSR);
-    puts("\n");
+    // puts(miss_tag);
+    // puts("CAN1 TSR: ");
+    // puth(CAN1->TSR);
+    // puts("\n");
     return;
   }
 
   *pkt_idx = (*pkt_idx + 1) & COUNTER_CYCLE;
 }
 
-// uint8_t gpio = 1;
 // timer 3 interrupt. Use this function to perform tasks at specific intervals. see main() for details
 uint8_t pkt_idx1 = 0;
 uint8_t pkt_idx2= 0;
@@ -555,25 +554,26 @@ uint8_t pkt_idx4 = 0;
 uint8_t turn = 0;
 void TIM3_IRQ_Handler(void) {
   CAN_FIFOMailBox_TypeDef to_send;
+  const flash_config_t *cfg;
 
   switch (turn) {
     case 0: { // steer_angle
-      if (steer_angle_major_cfg->enabled & 1){
-        uint8_t dat[6];
-        dat[5] = ((state & 0xFU) << 4) | pkt_idx1;
-        dat[4] = (steer_angle_rate >> 8) & 0xFF;
-        dat[3] = (steer_angle_rate >> 0) & 0xFF;
-        dat[2] = (steer_angle >> 8) & 0xFF;
-        dat[1] = (steer_angle >> 0) & 0xFF;
-        dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
+      uint8_t dat[6];
+      cfg = signal_configs[1];
+      dat[5] = (((cfg->can.enabled & 1) & 0xFU) << 4) | pkt_idx1;
+      dat[4] = (steer_angle_rate >> 8) & 0xFF;
+      dat[3] = (steer_angle_rate >> 0) & 0xFF;
+      dat[2] = (steer_angle >> 8) & 0xFF;
+      dat[1] = (steer_angle >> 0) & 0xFF;
+      dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
 
-        to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-        to_send.RDHR = dat[4] | (dat[5] << 8);
-        to_send.RDTR = 6;
-        to_send.RIR = (80 << 21) | 1U;
+      to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
+      to_send.RDHR = dat[4] | (dat[5] << 8);
+      to_send.RDTR = 6;
+      to_send.RIR = (80 << 21) | 1U;
 
-        send_can1_message(&to_send, &pkt_idx1, "CAN MISS1\n");
-      }
+      send_can1_message(&to_send, &pkt_idx1);
+    
       break;
     }
 
@@ -583,7 +583,7 @@ void TIM3_IRQ_Handler(void) {
       dat[7] = ((state & 0xFU) << 4) | pkt_idx2;
       dat[6] = 0;
       dat[5] = 0;
-      dat[4] = 0;
+      dat[4] = ((brake_pressed | brake_pressed_can) & 1) << 1 | ((ignition_line | ignition_can) & 1);
       dat[3] = (cps_pulse_count >> 0) & 0xFF;
       dat[2] = (cps_dt_us >> 8) & 0xFF;
       dat[1] = (cps_dt_us >> 0) & 0xFF;
@@ -594,7 +594,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (117 << 21) | 1U;
 
-      send_can1_message(&to_send, &pkt_idx2, "CAN MISS2\n");
+      send_can1_message(&to_send, &pkt_idx2);
 
       break;
     }
@@ -602,7 +602,8 @@ void TIM3_IRQ_Handler(void) {
     case 2: {
       //VSS signal 
       uint8_t dat[8];
-      dat[7] = ((vehicle_speed_cfg->enabled & 1) << 4) | pkt_idx3;
+      cfg = signal_configs[3];
+      dat[7] = ((cfg->can.enabled & 1) << 4) | pkt_idx3;
       dat[6] = (vss_can >> 8) & 0xFF;
       dat[5] = (vss_can >> 0) & 0xFF;
       dat[4] = 0;
@@ -615,7 +616,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
       to_send.RDTR = 8;
       to_send.RIR = (118 << 21) | 1U;
-      send_can1_message(&to_send, &pkt_idx3, "CAN MISS4\n");
+      send_can1_message(&to_send, &pkt_idx3);
 
       break;
     }
@@ -624,11 +625,11 @@ void TIM3_IRQ_Handler(void) {
       // TODO: implement this from the ADC readouts
       uint8_t dat[8];
       dat[7] = ((state & 0xFU) << 4) | pkt_idx4;
-      dat[6] = (adc2 >> 8) & 0xFF;
-      dat[5] = (adc2 >> 0) & 0xFF;
-      dat[4] = (adc1 >> 8) & 0xFF;
-      dat[3] = (adc1 >> 0) & 0xFF;
-      dat[2] = 0;
+      dat[6] = (adc[1] >> 8) & 0xFF;
+      dat[5] = (adc[1] >> 0) & 0xFF;
+      dat[4] = (adc[0] >> 8) & 0xFF;
+      dat[3] = (adc[0] >> 0) & 0xFF;
+      dat[2] = ((buttons[0] << 3) | (buttons[2] << 2) | (buttons[3] << 1) | (buttons[1])) & 0xF;
       dat[1] = 0;
       dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
 
@@ -637,7 +638,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (256 << 21) | 1U;
 
-      send_can1_message(&to_send, &pkt_idx4, "CAN MISS4\n");
+      send_can1_message(&to_send, &pkt_idx4);
       break;
       }
     default: {
@@ -668,14 +669,11 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
         heartbeat_counter += 1U;
       }
       // if the heartbeat has been gone for a while, go to SILENT safety mode and enter power save
-      if (heartbeat_counter >= 2) {
+      if (heartbeat_counter > 1) {
         // puts("heartbeat not seen for 0x");
         // puth(heartbeat_counter);
         // puts(" seconds. Turning off 12V and IGN.\n");
-        if (relay_on != 0 || ignition_on != 0) {
-          relay_on = 0;
-          ignition_on = 0;
-        }
+        relay_req_usb = 0;
       }
       // check registers
       check_registers();
@@ -684,7 +682,55 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     }
     loop_counter++;
     loop_counter %= 8U;
+    if(ignition_line | ignition_can){
+      if(ignition_cnt < 40){ // 5 sec 
+        ignition_cnt++;
+      }
+    } else {
+      ignition_cnt = 0;
+      relay_on = 0;
+    }
   }
+  // VSS and CPS timeout checks
+  const uint32_t VSS_TIMEOUT_US = 900000;
+  const uint32_t CPS_TIMEOUT_US = 900000;
+  uint32_t now = TIM2->CNT;
+  if ((now - vss_last_us) > VSS_TIMEOUT_US) {
+    vss_dt_us = 0;
+  }
+  if ((now - cps_last_us) > CPS_TIMEOUT_US) {
+    cps_dt_us = 0;  
+  }
+
+  for (int i = 0; i <= 3; i++) {
+    const flash_config_t *cfg = signal_configs[i + 11];
+    if (!cfg || cfg->cfg_type != CFG_TYPE_ADC || !(cfg->adc.adc_en & 1)) continue;
+
+    uint8_t ch = cfg->adc.adc_num;
+    if (ch >= 2) continue;
+
+    uint32_t adc_cmp = adc[ch];
+    uint32_t ref = (ch == 0) ? cfg->adc.adc1 : cfg->adc.adc2;
+
+    uint32_t lo = (ref >= cfg->adc.adc_tolerance) ? (ref - cfg->adc.adc_tolerance) : 0;
+    uint32_t hi = ref + cfg->adc.adc_tolerance;
+
+    buttons[i] = (adc_cmp >= lo && adc_cmp <= hi);
+
+    // Debug
+    puts("BTN "); puth(i);
+    puts(": adc["); puth(ch); puts("]="); puth(adc_cmp);
+    puts(" ref="); puth(ref);
+    puts(" lo="); puth(lo); puts(" hi="); puth(hi);
+    puts(" => "); puts(buttons[i] ? "ON\n" : "OFF\n");
+  }
+
+  // for (int i=0; i<4; i++){
+  //   puth(buttons[i]);
+  //   puts("\n");
+  // }
+  // puth(adc_cmp);
+  // puts("\n");
   TIM9->SR = 0;
 }
 
@@ -717,12 +763,29 @@ void EXTI9_5_IRQ_Handler(void) {
 
 // This function is the main application. It is run in a while loop from main() and is interrupted by those specified in main().
 void loop(void) {
-  adc1 = adc_get(12); // ADC1
-  adc2 = adc_get(13);  // ADC2
+
+  adc[0] = adc_get(12); // ADC1
+  adc[1] = adc_get(13);  // ADC2
   // read/write
-  ignition_line = get_gpio_input(GPIOA, 3);
-  brake_pressed = get_gpio_input(GPIOA, 6);
+  ignition_line = !get_gpio_input(GPIOA, 3);
+  relay_req_obdc = !get_gpio_input(GPIOA, 2);
+  brake_pressed = !get_gpio_input(GPIOA, 6);
   set_gpio_output(GPIOB, 0, relay_on);
+  set_gpio_output(GPIOB, 1, !ignition_on);
+
+  if (ignition_line | ignition_can){
+    ignition_on = 1; 
+    relay_on=1;
+    if (relay_req_obdc | relay_req_usb | (ignition_cnt < 40)){
+      relay_on=1;
+    } else {
+      relay_on=0;
+    }
+  } else {
+    ignition_on = 0;
+    relay_on = 0;
+  }
+
   watchdog_feed();
 }
 
@@ -733,19 +796,21 @@ int main(void) {
   memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
 
   if (!validate_flash_config(&current_cfg_in_ram)) {
-    flash_unlock();
-    flash_config_format();
-    flash_lock();
+    // flash_unlock();
+    // flash_config_format();
+    // flash_lock();
     flash_configured = 0;
-    NVIC_SystemReset();
+    // NVIC_SystemReset();
+    puts("FLASH NOT FORMATTED. PLEASE FORMAT BEFORE WRITING A CONFIG.\n");
   } else {
     flash_configured = 1;
     init_config_pointers(&current_cfg_in_ram);
   }
+
   // ###################################################################
 
-  // Init interrupt table
-  init_interrupts(true);
+    // Init interrupt table
+    init_interrupts(true);
 
   REGISTER_INTERRUPT(CAN1_TX_IRQn, CAN1_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
   REGISTER_INTERRUPT(CAN1_RX0_IRQn, CAN1_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
@@ -837,16 +902,12 @@ int main(void) {
   NVIC_EnableIRQ(TIM1_BRK_TIM9_IRQn);
 
   // interrupts for VSS and CPS
+  // PA4 and PA5, respectively
   RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
-  // Map EXTI4 and EXTI5 to PA4 and PA5
   SYSCFG->EXTICR[1] &= ~(SYSCFG_EXTICR2_EXTI4 | SYSCFG_EXTICR2_EXTI5);
-  // Unmask EXTI lines 4 and 5
   EXTI->IMR |= EXTI_IMR_IM4 | EXTI_IMR_IM5;
-  // Trigger on rifallingsing edge
   EXTI->FTSR |= EXTI_FTSR_TR4 | EXTI_FTSR_TR5;
-  // Clear pending interrupts
   EXTI->PR = EXTI_PR_PR4 | EXTI_PR_PR5;
-  // Enable EXTI interrupts in NVIC
   NVIC_EnableIRQ(EXTI4_IRQn);
   NVIC_EnableIRQ(EXTI9_5_IRQn); // handles lines 5-9
 
@@ -865,13 +926,21 @@ int main(void) {
   set_gpio_pullup(GPIOB, 1, PULL_UP);
   set_gpio_pullup(GPIOA, 4, PULL_UP);
   set_gpio_pullup(GPIOA, 5, PULL_UP);
+  set_gpio_pullup(GPIOA, 3, PULL_UP);
+  set_gpio_pullup(GPIOA, 2, PULL_UP);
   set_gpio_pullup(GPIOA, 6, PULL_UP);
 
   set_gpio_output(GPIOB, 0, 0); // RELAY off
   set_gpio_output(GPIOB, 1, 1); // IGN_OBDC off
 
   RCC->APB1ENR &= ~RCC_APB1ENR_WWDGEN;
-  // watchdog_init();
+
+  if (signal_configs[0] != NULL && (signal_configs[0]->flags[0] & 1)){
+    puts("WATCHDOG ENABLED\n");
+    watchdog_init();
+  } else {
+    puts("WATCHDOG DISABLED\n");
+  }
 
   uint32_t reason = RCC->CSR;
   puts("Reset cause: ");

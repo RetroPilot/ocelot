@@ -673,7 +673,7 @@ class Panda(object):
   def flash_wipe_config(self):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFD, 0, 0, b'')
 
-  def flash_config_write(self, index, can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled):
+  def flash_config_write_CAN(self, index, can_id, scale_offs, scale_mult, msg_len_bytes, sig_type, shift_amt, sig_len, endian_type, enabled):
     # Write a config entry to flash.
     # :param index: entry index (0-15)
     # :param msg_type: signal type (0-4)
@@ -683,17 +683,24 @@ class Panda(object):
     # :param can_id: 11/29-bit CAN ID
     # :param scale_mult: multiplier * 1000
     # :param scale_offs: offset * 1000
-    assert 0 <= index < 16
-    dat = struct.pack("<IBBBBBhiB", can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled)
-    print(dat)
-    self.send_heartbeat()
+    assert 0 <= index < 32
+    dat = struct.pack("<Iih6B7sB", can_id, scale_offs, scale_mult, msg_len_bytes, sig_type, shift_amt, sig_len, endian_type, enabled, b'x00\x00\x00\x00\x00\x00\x00', 2)
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
+  
+
+  def flash_config_write_ADC(self, index, adc1, adc2, adc_tol, adc_num, adc_en):
+    assert 11 <= index < 16
+    adc_reserved = bytes(4)  
+    flags = bytes(7) 
+    cfg_type = 3 
+
+    dat = struct.pack("<IIHB4sB7sB", adc1, adc2, adc_tol, adc_num, adc_reserved, adc_en, flags, cfg_type)
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
   def flash_config_read(self):
-    import struct
 
-    MAX_CONFIG_ENTRIES = 16
-    ENTRY_SIZE = 16
+    MAX_CONFIG_ENTRIES = 32
+    ENTRY_SIZE = 24
     HEADER_SIZE = 4  # magic
     CRC_SIZE = 4
     TOTAL_SIZE = HEADER_SIZE + ENTRY_SIZE * MAX_CONFIG_ENTRIES + CRC_SIZE
@@ -712,18 +719,70 @@ class Panda(object):
     entries = []
     for i in range(MAX_CONFIG_ENTRIES):
       offset = HEADER_SIZE + i * ENTRY_SIZE
-      can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled= struct.unpack_from("<IBBBBBhiB", raw, offset)
-      entries.append({
-        "index": i,
-        "can_id": can_id,
-        "sig_len_bytes" : sig_len_bytes,
-        "msg_type": msg_type,
-        "shift_amt": shift_amt,
-        "msg_len": msg_len,
-        "endianness": endian,
-        "scale_mult": scale_mult,
-        "scale_offs": scale_offs,
-        "enabled" : enabled
-      })
+      entry_bytes = raw[offset:offset + ENTRY_SIZE]
+      if len(entry_bytes) != ENTRY_SIZE:
+        print(f"Entry {i}: incomplete read")
+        continue
+
+      cfg_type = entry_bytes[-1]  # last byte
+      
+      if cfg_type == 1:
+        entries.append({
+          "index": i,
+          "cfg_type": "SYSTEM",
+          "raw": entry_bytes.hex(),
+        })
+      elif cfg_type == 2:
+        can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled, raw_flags, cfg_type= struct.unpack_from("<Iih6B7sB", raw, offset)
+        entries.append({
+          "index": i,
+          "can_id": can_id,
+          "scale_offs" : sig_len_bytes,
+          "scale_mult": msg_type,
+          "msg_len_bytes": shift_amt,
+          "sig_type": msg_len,
+          "shift_amt": endian,
+          "sig_len": scale_mult,
+          "endian_type": scale_offs,
+          "enabled" : enabled,
+          "flags": raw_flags,
+          "cfg_type": cfg_type,
+        })
+      elif cfg_type == 3:
+        adc1, adc2, adc_tol, adc_num, adc_reserved, adc_en, raw_flags, cfg_type= struct.unpack_from("<I I H B 4s B 7s B", raw, offset)
+        entries.append({
+          "index": i,
+          "adc1": adc1,
+          "adc2": adc2,
+          "adc_tolerance": adc_tol,
+          "adc_num": adc_num,
+          "adc_reserved": adc_reserved,
+          "adc_en": adc_en,
+          "flags": raw_flags,
+          "cfg_type": cfg_type,
+        })
+      # entries.append({
+      #   "index": i,
+      #   "cfg_type": cfg_type,
+      #   "raw": entry_bytes.hex(),
+      # })
+
+    # for i in range(MAX_CONFIG_ENTRIES):
+    #   offset = HEADER_SIZE + i * ENTRY_SIZE
+    #   can_id, sig_len_bytes, msg_type, shift_amt, msg_len, endian, scale_mult, scale_offs, enabled, raw_flags, cfg_type= struct.unpack_from("<Iih6B7sB", raw, offset)
+    #   entries.append({
+    #     "index": i,
+    #     "can_id": can_id,
+    #     "scale_offs" : sig_len_bytes,
+    #     "scale_mult": msg_type,
+    #     "msg_len_bytes": shift_amt,
+    #     "sig_type": msg_len,
+    #     "shift_amt": endian,
+    #     "sig_len": scale_mult,
+    #     "endian_type": scale_offs,
+    #     "enabled" : enabled,
+    #     "flags": raw_flags,
+    #     "cfg_type": cfg_type,
+    #   })
     return entries
   
