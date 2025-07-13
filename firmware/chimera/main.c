@@ -346,8 +346,11 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
           setup->b.wValue.w < MAX_CONFIG_ENTRIES) {
         config_write_pending = true;
       } else {
+        puts("\n len: ");
         puth(setup->b.wLength.w);
+        puts("\n expected: ");
         puth(sizeof(flash_config_t));
+        puts("\n value: ");
         puth(setup->b.wValue.w);
         puts("0xFE command: Invalid length or index. Not deferring.\n");
       }
@@ -555,6 +558,7 @@ uint8_t turn = 0;
 void TIM3_IRQ_Handler(void) {
   CAN_FIFOMailBox_TypeDef to_send;
   const flash_config_t *cfg;
+  const flash_config_t *sys_cfg = signal_configs[0];
 
   switch (turn) {
     case 0: { // steer_angle
@@ -572,8 +576,9 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 6;
       to_send.RIR = (80 << 21) | 1U;
 
-      send_can1_message(&to_send, &pkt_idx1);
-    
+      if (sys_cfg->sys.can_out_en & 1){
+        send_can1_message(&to_send, &pkt_idx1);
+      }
       break;
     }
 
@@ -594,8 +599,9 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (117 << 21) | 1U;
 
-      send_can1_message(&to_send, &pkt_idx2);
-
+      if (sys_cfg->sys.can_out_en & 2) {
+        send_can1_message(&to_send, &pkt_idx2);
+      }
       break;
     }
 
@@ -616,8 +622,10 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
       to_send.RDTR = 8;
       to_send.RIR = (118 << 21) | 1U;
-      send_can1_message(&to_send, &pkt_idx3);
 
+      if (sys_cfg->sys.can_out_en & 4){ 
+        send_can1_message(&to_send, &pkt_idx3);
+      }
       break;
     }
 
@@ -629,7 +637,7 @@ void TIM3_IRQ_Handler(void) {
       dat[5] = (adc[1] >> 0) & 0xFF;
       dat[4] = (adc[0] >> 8) & 0xFF;
       dat[3] = (adc[0] >> 0) & 0xFF;
-      dat[2] = ((buttons[0] << 3) | (buttons[2] << 2) | (buttons[3] << 1) | (buttons[1])) & 0xF;
+      dat[2] = ((buttons[0] << 3) | (buttons[1] << 2) | (buttons[2] << 1) | (buttons[3])) & 0xF;
       dat[1] = 0;
       dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
 
@@ -638,7 +646,9 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (256 << 21) | 1U;
 
-      send_can1_message(&to_send, &pkt_idx4);
+      if (sys_cfg->sys.can_out_en & 8){ 
+        send_can1_message(&to_send, &pkt_idx4);
+      }
       break;
       }
     default: {
@@ -717,12 +727,35 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
 
     buttons[i] = (adc_cmp >= lo && adc_cmp <= hi);
 
-    // Debug
-    puts("BTN "); puth(i);
-    puts(": adc["); puth(ch); puts("]="); puth(adc_cmp);
-    puts(" ref="); puth(ref);
-    puts(" lo="); puth(lo); puts(" hi="); puth(hi);
-    puts(" => "); puts(buttons[i] ? "ON\n" : "OFF\n");
+    cfg = signal_configs[0];
+    if (cfg && (cfg->sys.debug_lvl & 1)){
+      puts("BTN "); puth(i);
+      puts(": adc["); puth(ch); puts("]="); puth(adc_cmp);
+      puts(" ref="); puth(ref);
+      puts(" lo="); puth(lo); puts(" hi="); puth(hi);
+      puts(" => "); puts(buttons[i] ? "ON\n" : "OFF\n");
+    }
+  }
+
+  const flash_config_t *syscfg = NULL;
+  syscfg = signal_configs[0];
+  // Debug Level 1
+  if (syscfg && (syscfg->sys.debug_lvl & 1)){
+    syscfg = signal_configs[1];
+    puts("STEER_ANGLE_MAJ: ");
+    puts("confgured: ");
+    puts((signal_configs[1]->can.enabled & 1) ? "true" : "false");
+    puts(" STEER_ANGLE_MIN: ");
+    puts((signal_configs[2]->can.enabled & 1) ? "true" : "false");
+    puts(" steer angle: ");
+    puth(steer_angle);
+    puts("\n");
+
+    puts("ADC0 RAW: ");
+    puth(adc[0]);
+    puts(" ADC1 RAW: ");
+    puth(adc[1]);
+    puts("\n");
   }
 
   // for (int i=0; i<4; i++){
@@ -930,12 +963,15 @@ int main(void) {
   set_gpio_pullup(GPIOA, 2, PULL_UP);
   set_gpio_pullup(GPIOA, 6, PULL_UP);
 
+  // set_gpio_pullup(GPIOC, 2, PULL_UP);
+  // set_gpio_pullup(GPIOC, 3, PULL_UP);
+
   set_gpio_output(GPIOB, 0, 0); // RELAY off
   set_gpio_output(GPIOB, 1, 1); // IGN_OBDC off
 
   RCC->APB1ENR &= ~RCC_APB1ENR_WWDGEN;
 
-  if (signal_configs[0] != NULL && (signal_configs[0]->flags[0] & 1)){
+  if (signal_configs[1] != NULL && (signal_configs[1]->sys.iwdg_en & 1)){
     puts("WATCHDOG ENABLED\n");
     watchdog_init();
   } else {

@@ -391,23 +391,6 @@ void TIM3_IRQ_Handler(void) {
     ++pkt_idx;
     pkt_idx &= COUNTER_CYCLE;
     send = !send;
-  }
-  if (send) {
-    uint8_t dat[6];
-    dat[5] = 0;
-    dat[4] = (acc_set_speed_kmh & 0xFF);
-    dat[3] = (acc_set_speed_kmh << 8U);
-    dat[2] = (acc_mode << 5U) | (acc_engaged << 4U) | (acc_on_off_sw << 3U) | (acc_speed_up << 2U) | (acc_speed_down << 1U) | (acc_cancel);
-    dat[1] = ((state & 0xFU) << 4) | pkt2_idx;
-    dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
-    CAN_FIFOMailBox_TypeDef to_send;
-    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4] | (dat[5] << 8);
-    to_send.RDTR = 6;
-    to_send.RIR = (CAN_OUTPUT_ACC_STATE << 21) | 1U;
-    can_send(&to_send, 0, false);
-    ++pkt2_idx;
-    pkt2_idx &= COUNTER_CYCLE;
   } else { 
     // old can packet hasn't sent!
     state = FAULT_SEND;

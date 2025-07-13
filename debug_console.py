@@ -51,34 +51,14 @@ if __name__ == "__main__":
             else:
               break
           if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-            ln = sys.stdin.readline()
-            if ln == "h\n":
-              h = panda.health()
-              print(h)
-            elif ln == "r\n":
-              panda.reset()
-            elif ln == "enable_iwdg\n":
-              panda.flash_config_write_SYS(0, 0, 0, 0, 0, 0, 0, 0)
-            elif ln == "disable_iwdg\n":
-              panda.flash_config_write_CAN(0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            elif ln == "flashwrite0\n":
-              panda.flash_config_write_CAN(1, 37, 0, 15, 8, 1, 48, 12, 0, 1)
-            elif ln == "flashwrite1\n":
-              panda.flash_config_write_CAN(2, 37, 0, 1 , 8, 2, 28, 4, 0, 1)
-            elif ln == "flashwrite2\n":
-              panda.flash_config_write_ADC(11, 0, 0, 100, 0, 1)
-            elif ln == "flashwrite3\n":
-              panda.flash_config_write_ADC(12, 0x400, 0, 100, 0, 1)
-            elif ln == "flashwrite4\n":
-              panda.flash_config_write_ADC(13, 0x500, 0, 100, 0, 1)
-            elif ln == "flashwrite5\n":
-              panda.flash_config_write_ADC(14, 0x570, 0, 100, 0, 1)
-            elif ln == "flashread\n":
-              ret = panda.flash_config_read()
-              for r in ret:
-                print(r)
-            elif ln == "flashwipe\n":
+            ln = sys.stdin.readline().strip()
+            if (ln == 'r'):
+              cfg = panda.flash_config_read()
+              print(cfg)
+            elif (ln == 'f'):
               panda.flash_wipe_config()
+            elif (ln == 'q'):
+              exit()
             if claim:
               panda.serial_write(port_number, ln)
           time.sleep(0.01)

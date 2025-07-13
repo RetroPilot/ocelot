@@ -11,35 +11,49 @@
 #define CFG_TYPE_CAN 2
 #define CFG_TYPE_ADC 3
 
-typedef struct __attribute__((packed)) {
+#include <stdint.h>
+#include <stddef.h>
+
+typedef struct __attribute__((packed, aligned(1))) {
   union {
-    // CAN config (16 bytes)
-    struct {
-      uint32_t can_id;  
-      int32_t scale_offs; 
+    uint8_t raw[23];
+
+    // Add __attribute__((packed)) to each inner struct
+    struct __attribute__((packed)) {
+      uint8_t debug_lvl;
+      uint8_t can_out_en;
+      uint8_t iwdg_en;
+      uint8_t cfg_extra[20];
+    } sys;
+
+    struct __attribute__((packed)) {
+      uint32_t can_id;
+      int32_t scale_offs;
       int16_t scale_mult;
-      uint8_t msg_len_bytes; // MSB
-      uint8_t sig_type;    
+      uint8_t msg_len_bytes;
+      uint8_t sig_type;
       uint8_t shift_amt;
       uint8_t sig_len;
-      uint8_t endian_type;   // 0=big, 1=little     
-      uint8_t enabled;  
+      uint8_t endian_type;
+      uint8_t enabled;
+      uint8_t is_signed;
+      uint8_t extra[6];
     } can;
-    // ADC config (16 bytes)
-    struct {
+
+    struct __attribute__((packed)) {
       uint32_t adc1;
       uint32_t adc2;
       uint16_t adc_tolerance;
       uint8_t adc_num;
       uint8_t adc_reserved[4];
       uint8_t adc_en;
+      uint8_t extra[7];
     } adc;
   };
-  // config flags (8 bytes)
-  uint8_t flags[7];    
   uint8_t cfg_type;
-
 } flash_config_t;
+
+_Static_assert(sizeof(flash_config_t) == 24, "flash_config_t must be exactly 24 bytes");
 
 typedef struct __attribute__((packed)) {
   uint32_t magic;                      // To detect valid config
@@ -248,62 +262,6 @@ bool validate_flash_config(const config_block_t *cfg) {
   return true;
 }
 
-// bool validate_flash_config(const config_block_t *cfg) {
-//   if (cfg->magic != FLASH_CONFIG_MAGIC ||
-//       cfg->crc32 != crc32(&cfg->entries[0], sizeof(cfg->entries))) {
-//     return false;
-//   }
-
-//   for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
-//     const flash_config_t *e = &cfg->entries[i];
-
-//     // Skip all-zero entries
-//     const uint8_t *raw = (const uint8_t *)e;
-//     bool all_zero = true;
-//     for (uint8_t b = 0; b < sizeof(flash_config_t); b++) {
-//       if (raw[b] != 0) {
-//         all_zero = false;
-//         break;
-//       }
-//     }
-//     if (all_zero) continue;
-
-//     switch (e->cfg_type) {
-//       case CFG_TYPE_CAN:
-//         if (!(e->can.enabled & 1)) continue;  // Only validate enabled CAN configs
-//         if (e->can.sig_type != i) {
-//           puts("Invalid CAN config: sig_type does not match index ");
-//           puth(i);
-//           puts("\n");
-//           return false;
-//         }
-//         break;
-
-//       case CFG_TYPE_ADC:
-//         if (!(e->adc.adc_en & 1)) continue;  // Only validate enabled ADC configs
-//         if (e->adc.adc_num > 3) {
-//           puts("Invalid ADC config: adc_num out of range at index ");
-//           puth(i);
-//           puts("\n");
-//           return false;
-//         }
-//         break;
-
-//       case CFG_TYPE_SYS:
-//         // Optional: add checks for SYS config here
-//         break;
-
-//       default:
-//         puts("Invalid config: unknown cfg_type at index ");
-//         puth(i);
-//         puts("\n");
-//         return false;
-//     }
-//   }
-
-//   return true;
-// }
-
 void init_config_pointers(const config_block_t *cfg) {
   for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
     const flash_config_t *e = &cfg->entries[i];
@@ -330,15 +288,36 @@ void init_config_pointers(const config_block_t *cfg) {
   }
 }
 
-
 static inline int32_t extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOMailBox_TypeDef *msg) {
   uint64_t can_raw = 0;
   for (int i = 0; i < cfg->can.msg_len_bytes; i++) {
-    can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
+    can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFFULL;
     can_raw |= GET_BYTE(msg, i);
   }
 
-  int32_t val = (can_raw >> cfg->can.shift_amt) & ((1 << cfg->can.sig_len) - 1);
+  uint32_t raw_val = (can_raw >> cfg->can.shift_amt) & ((1ULL << cfg->can.sig_len) - 1);
+
+  // Sign-extend if needed
+  if (cfg->can.is_signed & 1) {
+    // If the sign bit is set
+    if (raw_val & (1U << (cfg->can.sig_len - 1))) {
+      raw_val |= ~((1U << cfg->can.sig_len) - 1);  // fill upper bits with 1's
+    }
+  }
+
+  int32_t val = (int32_t)raw_val;
   val = val * cfg->can.scale_mult + cfg->can.scale_offs;
   return val;
 }
+
+// static inline int32_t extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOMailBox_TypeDef *msg) {
+//   uint64_t can_raw = 0;
+//   for (int i = 0; i < cfg->can.msg_len_bytes; i++) {
+//     can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
+//     can_raw |= GET_BYTE(msg, i);
+//   }
+
+//   int32_t val = (can_raw >> cfg->can.shift_amt) & ((1 << cfg->can.sig_len) - 1);
+//   val = val * cfg->can.scale_mult + cfg->can.scale_offs;
+//   return val;
+// }
