@@ -20,29 +20,34 @@
 #include "gpio.h"
 #include "crc.h"
 
-// TODO: handle the VSS sensor
-// probably going to have to do a 1 second update interval
+#include "drivers/uart.h"
+
+#define USB_STRING_DESCRIPTORS
+
+#define STRING_DESCRIPTOR_HEADER(size) \
+  (((((size) * 2) + 2) & 0xFF) | 0x0300)
+
+static const uint16_t string_manufacturer_desc[] = {
+  STRING_DESCRIPTOR_HEADER(10),
+  'R','e','t','r','o','P','i','l','o','t'
+};
+
+static const uint16_t string_product_desc[] = {
+  STRING_DESCRIPTOR_HEADER(13),
+  'A','c','t','u','a','t','o','r',' ','C','o','r','e'
+};
+
+#include "chimera/usb.h"
+#include "chimera/chimera.h"
+
+#define PEDAL_USB
+
+// TODO: SPI and PWM
+// TODO: integrate Chimera
 
 // #define CAN CAN1
 
-#define PEDAL_USB
-#define DEBUG
-
-#ifdef PEDAL_USB
-  #include "drivers/uart.h"
-  #include "drivers/usb.h"
-#else
-  // no serial either
-  void puts(const char *a) {
-    UNUSED(a);
-  }
-  void puth(unsigned int i) {
-    UNUSED(i);
-  }
-  void puth2(unsigned int i) {
-    UNUSED(i);
-  }
-#endif
+// #define DEBUG
 
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
@@ -64,6 +69,14 @@ void debug_ring_callback(uart_ring *ring) {
   char rcv;
   while (getc(ring, &rcv) != 0) {
     (void)putc(ring, rcv);
+  }
+}
+
+// callback function to handle flash writes over USB
+void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
+  if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(flash_config_t))) {
+    puts("debug_1\n");
+    handle_deferred_config_write();
   }
 }
 
@@ -112,6 +125,14 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   UNUSED(hardwired);
   unsigned int resp_len = 0;
   uart_ring *ur = NULL;
+
+  // Store the setup packet and data pointer for deferred processing if needed
+  // This must be done for all commands that might involve an OUT data phase
+  // and need deferred processing.
+  memcpy(&last_setup_pkt, setup, sizeof(USB_Setup_TypeDef));
+  last_usb_data_ptr = usbdata; // Save the pointer to the buffer
+
+
   switch (setup->b.bRequest) {
     // **** 0xd1: enter bootloader mode
     case 0xd1:
@@ -176,6 +197,52 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         }
         break;
       }
+    case 0xFD: {
+      flash_unlock();
+      flash_config_format();
+      flash_lock();
+      break;
+    }
+    case 0xFE: {  // Write config entry
+      puts("0xFE command received. Deferring write...\n");
+      if (setup->b.wLength.w == sizeof(flash_config_t) &&
+          setup->b.wValue.w < MAX_CONFIG_ENTRIES) {
+        config_write_pending = true;
+      } else {
+        puts("\n len: ");
+        puth(setup->b.wLength.w);
+        puts("\n expected: ");
+        puth(sizeof(flash_config_t));
+        puts("\n value: ");
+        puth(setup->b.wValue.w);
+        puts("0xFE command: Invalid length or index. Not deferring.\n");
+      }
+      break;
+    }
+    case 0xFF: {  // Chunked config read
+      uint16_t offset = setup->b.wValue.w;
+      uint16_t length = setup->b.wLength.w;
+
+      // Make sure we're not reading past the end of the config block
+      const uint8_t *flash_bytes = (const uint8_t *)CONFIG_FLASH_ADDR;
+      if (*(uint32_t *)flash_bytes == FLASH_CONFIG_MAGIC) {
+        uint16_t max_len = MIN(length, MAX_RESP_LEN);  // cap to USB response size
+        if (offset < sizeof(config_block_t)) {
+          uint16_t remaining = sizeof(config_block_t) - offset;
+          uint16_t copy_len = MIN(remaining, max_len);
+          memcpy(resp, flash_bytes + offset, copy_len);
+          resp_len = copy_len;
+          // puts("Chunked config block read\n");
+        } else {
+          puts("Offset out of range in config read\n");
+        }
+      } else {
+        puts("No valid config block in flash\n");
+        memset(resp, 0xFF, MIN(length, MAX_RESP_LEN));
+        resp_len = MIN(length, MAX_RESP_LEN);
+      }
+      break;
+    }
     default:
       puts("NO HANDLER ");
       puth(setup->b.bRequest);
@@ -189,11 +256,11 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 // control theory:
 // set clutch/relay thing
 // get to requested position 
-// min 0x820
-// max 0xe90
-// max input = 1648.. lets call that 1500 (0x5DC)
-#define MAX_INPUT 0x5DC
-#define TPS_MIN 0x200
+uint8_t enabled = 0;
+uint32_t tps_min = 0;
+uint32_t tps_max = 0;
+uint16_t adc_tol = 0;
+uint8_t adc_num = 0;
 // addresses to be used on CAN
 #define CAN_GAS_INPUT  0x400
 #define CAN_GAS_OUTPUT 0x401U
@@ -201,33 +268,11 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 #define CAN_GAS_SIZE 6
 #define COUNTER_CYCLE 0xFU
 
-void CAN1_TX_IRQ_Handler(void) {
-  // clear interrupt
-  CAN1->TSR |= CAN_TSR_RQCP0;
-}
-
-// acc states
-bool acc_mode = 0;
-bool acc_engaged = 0;
-uint16_t acc_set_speed_kmh = 0;
-// buttons
-bool acc_on_off_sw = 0;
-bool acc_speed_up = 0;
-bool acc_speed_down = 0;
-bool acc_cancel = 0;
-
-#define TPS_THRES 20
-
-// two independent values
+// position and clutch
 uint32_t gas_set = 0;
-// clutch
 bool clutch = 0;
 
-// vehicle speed
-uint16_t vss = 0;
-uint16_t vss_cnt = 0;
-
-#define MAX_TIMEOUT 5U
+#define MAX_TIMEOUT 20U
 uint32_t timeout = 0;
 uint32_t current_index = 0;
 
@@ -244,13 +289,20 @@ uint32_t current_index = 0;
 #define FAULT_BAD_CHECKSUM 6U
 #define FAULT_INVALID 7U
 
+#define FAULT_CONFIG_INVALID 14U
+#define FAULT_NOT_CONFIGURED 15U
+
 uint8_t state = FAULT_STARTUP;
 
 const uint8_t crc_poly = 0x1D;  // standard crc8
 uint8_t crc8_lut_1d[256];
 
-uint32_t pdl0 = 0;
-uint32_t pdl1 = 0;
+uint32_t adc[2];
+
+void CAN1_TX_IRQ_Handler(void) {
+  // clear interrupt
+  CAN1->TSR |= CAN_TSR_RQCP0;
+}
 
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) {
@@ -283,56 +335,14 @@ void CAN1_RX0_IRQ_Handler(void) {
       if (dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
           if (enable) {
-            // TODO: we gotta get this outta here!
-            set_gpio_output(GPIOB, 4, 0); // CLUTCH
-            gas_set = value_0;
-            if (gas_set > 0){ 
-              //uint32_t lower_deadzone = TPS_MIN + gas_set - TPS_THRES;
-              //uint32_t upper_deadzone = TPS_MIN + gas_set + TPS_THRES;
-              set_gpio_output(GPIOB, 10, 0); // DIS
-              set_gpio_output(GPIOA, 2, 1); // PWM
-              set_gpio_output(GPIOB, 0, 1); // DIR
-              // deadzone check
-              set_gpio_output(GPIOB, 3,  0); 
-              set_gpio_output(GPIOA, 3,  1);
-              set_gpio_output(GPIOB, 1,  0); // DIR
-            } else {
-              set_gpio_output(GPIOB, 4, 1); // CLUTCH
-              set_gpio_output(GPIOA, 2, 0); // PWM
-              set_gpio_output(GPIOB, 10, 0); // DIS
-              set_gpio_output(GPIOB, 0, 1); // DIR
-  
-              set_gpio_output(GPIOB, 3,  1);
-              set_gpio_output(GPIOA, 3,  0);
-              set_gpio_output(GPIOB, 1,  1);
+            enabled = 1;
+            if (value_0 < 2000){ 
+              gas_set = value_0;
+            } else { 
+              state = FAULT_INVALID;
             }
-
-            /*
-            if (pdl0 >= lower_deadzone && pdl0 <= upper_deadzone) {
-              // Stop the motor if within the deadzone range
-              set_gpio_output(GPIOA, 2, 0);
-              set_gpio_output(GPIOB, 10, 1);
-            }
-            else if (pdl0 < (uint32_t)(TPS_MIN + gas_set)) {
-                // Turn the motor forward
-                set_gpio_output(GPIOA, 2, 0);
-                set_gpio_output(GPIOA, 3, 1);
-            }
-            else if (pdl0 > (uint32_t)(TPS_MIN + gas_set)) {
-                // Turn the motor reverse
-                set_gpio_output(GPIOA, 2, 1);
-                set_gpio_output(GPIOB, 0, 0);
-            }
-            */
           } else {
-            set_gpio_output(GPIOB, 4, 1); // CLUTCH
-            set_gpio_output(GPIOA, 2, 0); // PWM
-            set_gpio_output(GPIOB, 10, 0); // DIS
-            set_gpio_output(GPIOB, 0, 1); // DIR
-
-            set_gpio_output(GPIOB, 3,  1);
-            set_gpio_output(GPIOA, 3,  0);
-            set_gpio_output(GPIOB, 1,  1);
+            enabled = 0;
             gas_set = 0;
             // clear the fault state if values are 0 and the incoming request is valid
             if (value_0 == 0U) {
@@ -364,21 +374,18 @@ void CAN1_SCE_IRQ_Handler(void) {
 unsigned int pkt_idx = 0;
 unsigned int pkt2_idx = 0;
 
-int led_value = 0;
-uint32_t timer = 0;
-
 bool send = 0;
 void TIM3_IRQ_Handler(void) {
 
   // check timer for sending the user pedal and clearing the CAN
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
     uint8_t dat[8];
-    dat[1] = (pdl0 >> 0) & 0xFFU;
-    dat[2] = (pdl0 >> 8) & 0xFFU;
-    dat[3] = (vss >> 0) & 0xFFU;
-    dat[4] = (vss >> 8) & 0xFFU;
-    dat[5] = (vss_cnt >> 0) & 0xFFU;
-    dat[6] = (vss_cnt >> 8) & 0xFFU;
+    dat[1] = (adc[0] >> 0) & 0xFFU;
+    dat[2] = (adc[0] >> 8) & 0xFFU;
+    dat[3] = (adc[1] >> 0) & 0xFFU;
+    dat[4] = (adc[1] >> 8) & 0xFFU;
+    dat[5] = (0 >> 0) & 0xFFU;
+    dat[6] = (0 >> 8) & 0xFFU;
     dat[7] = ((state & 0xFU) << 4) | pkt_idx;
     dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
     CAN_FIFOMailBox_TypeDef to_send;
@@ -399,10 +406,6 @@ void TIM3_IRQ_Handler(void) {
     #endif
   }
 
-  // blink the LED
-  current_board->set_led(LED_GREEN, led_value);
-  led_value = !led_value;
-
   TIM3->SR = 0;
 
   // up timeout for gas set
@@ -414,99 +417,98 @@ void TIM3_IRQ_Handler(void) {
     set_gpio_output(GPIOA, 4, 0);
     set_gpio_output(GPIOA, 5, 0);
   } else {
-    timeout += 1U;
+    if (timeout < MAX_TIMEOUT){
+      timeout += 1U;
+    }
   }
-
-  #ifdef DEBUG
-  puth(TIM3->CNT);
-  puts(" PDL0: ");
-  puth(pdl0);
-  puts(" PDL1: ");
-  puth(pdl1);
-  puts(" VSS : ");
-  puth(vss);
-  puts(" VSS_CNT : ");
-  puth(vss_cnt);
-  puts(" buttons: ");
-  puth((acc_mode << 5U) | (acc_engaged << 4U) | (acc_on_off_sw << 3U) | (acc_speed_up << 2U) | (acc_speed_down << 1U) | (acc_cancel));
-  puts(" gas_set: ");
-  puth(gas_set);
-  puts(" clutch: ");
-  puth(clutch);
-  puts("\n");
-  #endif
-
-  // reset buttonstates
-  acc_on_off_sw = 0;
-  acc_cancel = 0;
-  acc_speed_down = 0;
-  acc_speed_up = 0;
-
 }
 
-// this should only be called if the ARR value is hit (no VSS pulse in 1 second or under 1 MPH)
-void TIM2_IRQ_HANDLER(void) {
-  puts("tim2 interrupt\n");
-  if (TIM2->SR & TIM_SR_UIF) {
-    TIM2->SR &= ~TIM_SR_UIF;  // Clear the interrupt flag
-    TIM2->CNT = 0;
-    timer = 0;
+void TIM1_BRK_TIM9_IRQ_Handler(void) {
+  if (TIM9->SR != 0) {
+    const flash_config_t *cfg = NULL;
+    cfg = signal_configs[0];
+    if (cfg && (cfg->sys.debug_lvl & 1)){
+      puth(TIM3->CNT);
+      puts("\n ADC0: ");
+      puth(adc[0]);
+      puts("\n ADC1: ");
+      puth(adc[1]);
+      puts("\n");
+    }
   }
-  vss = 0;
-  // EXTI->SWIER |= EXTI_SWIER_SWIER0;
+  TIM9->SR = 0;
 }
 
 void EXTI9_5_IRQ_Handler(void) {
   volatile unsigned int pr = EXTI->PR & (1U << 9);
   if ((pr & (1U << 9)) != 0U) {
-    timer = TIM2->CNT;
-    vss_cnt = (vss_cnt + 1) % 0xFFFFU;
-    // reset timer and clear interrupt
-    TIM2->CNT=0;
     EXTI->PR = (1U << 9);
   }
 }
 
 // ***************************** main code *****************************
-void pedal(void) {
+void loop(void) {
 
-  pdl0 = adc_get(12); // TPS
-  pdl1 = adc_get(13);  // CC_SW
+  adc[0] = adc_get(12);
+  adc[1] = adc_get(13);
 
-  switch(pdl1){
-    case 0x800 ... 0x900: ;
-      //cancel
-      acc_cancel = 1;
-    break;
-    case 0x400 ... 0x500: ;
-      // - set
-      acc_speed_down = 1;
-    break;
-    case 0x200 ... 0x300: ;
-      // + res
-      acc_speed_up = 1;
-    break;
-    case 0x00 ... 0x100: ;
-     // on-off
-     acc_on_off_sw = 1;
-     break;
-    default : ;
-     break;
-  }
+  if (enabled && gas_set > 0) {
+    if (gas_set > (tps_max - tps_min)) gas_set = tps_max - tps_min;
 
-  // calculate VSS
-  // sensor produces 4 pulses / rotation
-  // need to work out ratio of sensor / wheel to get speed
+    uint32_t target_adc = gas_set + tps_min;
+    uint32_t lower_deadzone = (target_adc > adc_tol) ? target_adc - adc_tol : 0;
+    uint32_t upper_deadzone = target_adc + adc_tol;
 
-  vss =  timer;
-  // vss_cnt = (3600000000.0f) / (4000.0f * (float)(timer));
-  // vss = vss_cnt / 0.44704f;
+    if (adc[adc_num] >= lower_deadzone && adc[adc_num] <= upper_deadzone) {
+      // In deadzone
+      set_gpio_output(GPIOA, 2, 0);  // PWM off
+      set_gpio_output(GPIOB, 10, 1); // disable motor
+    } else if (adc[adc_num] < target_adc) {
+      // Need to increase throttle
+      set_gpio_output(GPIOB, 10, 0); // enable
+      set_gpio_output(GPIOB, 0, 1);  // direction
+      set_gpio_output(GPIOA, 2, 1);  // PWM on
+    } else {
+      // Need to decrease throttle
+      set_gpio_output(GPIOB, 10, 0); // enable
+      set_gpio_output(GPIOB, 0, 0);  // reverse direction
+      set_gpio_output(GPIOA, 2, 1);  // PWM on
+    }
 
+    set_gpio_output(GPIOB, 3, 0);  // engage clutch (Motor2)
+    set_gpio_output(GPIOA, 3, 1);
+  } else {
+    // Disable everything
+    set_gpio_output(GPIOB, 3, 1); // disable driver 2 (clutch)
+    set_gpio_output(GPIOA, 3, 0);
+    // set_gpio_output(GPIOB, 4, 1);  // clutch off
+    set_gpio_output(GPIOA, 2, 0);  // PWM off
+    set_gpio_output(GPIOB, 10, 0); // disable motor
+    set_gpio_output(GPIOB, 0, 1);  // default DIR
+    gas_set = 0;
+    }
 
   watchdog_feed();
 }
 
 int main(void) {
+  // ############## FLASH HANDLING #####################
+  config_block_t current_cfg_in_ram;
+  memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
+
+  if (!validate_flash_config(&current_cfg_in_ram)) {
+    // flash_unlock();
+    // flash_config_format();
+    // flash_lock();
+    // NVIC_SystemReset();
+    puts("FLASH NOT FORMATTED. PLEASE FORMAT BEFORE WRITING A CONFIG.\n");
+  } else {
+    init_config_pointers(&current_cfg_in_ram);
+    puts("FLASH VALIDATED\n");
+  }
+
+  // ###################################################################
+
   // Init interrupt table
   init_interrupts(true);
 
@@ -517,8 +519,8 @@ int main(void) {
   // Should run at around 732Hz (see init below)
   REGISTER_INTERRUPT(TIM3_IRQn, TIM3_IRQ_Handler, 1000U, FAULT_INTERRUPT_RATE_TIM3)
 
-  // TIM2 interrupt on ARR trigger
-  REGISTER_INTERRUPT(TIM2_IRQn, TIM2_IRQ_HANDLER, 1000U, FAULT_INTERRUPT_RATE_TIM3)
+  // // 8Hz timer
+  REGISTER_INTERRUPT(TIM1_BRK_TIM9_IRQn, TIM1_BRK_TIM9_IRQ_Handler, 10U, FAULT_INTERRUPT_RATE_TIM9)
 
   disable_interrupts();
 
@@ -528,22 +530,24 @@ int main(void) {
   detect_configuration();
   detect_board_type();
 
+  // init board
+  current_board->init();
+  USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOVAL;
+  USBx->GOTGCTL |= USB_OTG_GOTGCTL_BVALOEN;
+  usb_init();
+
+  // 8hz
+  timer_init(TIM9, 183);
+  NVIC_EnableIRQ(TIM1_BRK_TIM9_IRQn);
+
   REGISTER_INTERRUPT(EXTI9_5_IRQn, EXTI9_5_IRQ_Handler, 0xFFFF, FAULT_INTERRUPT_RATE_TACH)
   register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR3_EXTI9_PA, 0x00U);
   register_set_bits(&(EXTI->IMR), (1U << 9));
   register_set_bits(&(EXTI->RTSR), (1U << 9));
   // register_set_bits(&(EXTI->FTSR), (1U << 9));
-  NVIC_EnableIRQ(EXTI9_5_IRQn);
-
-  // init board
-  current_board->init();
+  // NVIC_EnableIRQ(EXTI9_5_IRQn);  
 
   set_gpio_mode(GPIOC, 3, MODE_ANALOG);
-
-#ifdef PEDAL_USB
-  // enable USB
-  usb_init();
-#endif
 
   // pedal stuff
   // dac_init();
@@ -611,7 +615,6 @@ int main(void) {
 
   set_gpio_output(GPIOA, 10, 0); //CSN
 
-  // vss calcultation
   // enable the FPU
   enable_fpu();
   // setup microsecond timer
@@ -624,17 +627,42 @@ int main(void) {
   // use TIM2->CNT to read
   // reset with TIM2->CNT = 0;
 
-  NVIC_EnableIRQ(TIM2_IRQn);
+  // NVIC_EnableIRQ(TIM2_IRQn);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
-  watchdog_init();
+
+  if (signal_configs[0] != NULL && (signal_configs[0]->sys.iwdg_en & 1)){
+    puts("WATCHDOG ENABLED\n");
+    watchdog_init();
+  } else {
+    puts("WATCHDOG DISABLED\n");
+  }
+
+  if (signal_configs[1] != NULL){
+    //&& (signal_configs[1]->cfg_type == CFG_TYPE_ADC) 
+    //&& signal_configs[1]->adc.adc_en && signal_configs[1]->adc.adc_num >= 1
+    //&& signal_configs[1]->adc.adc1 < signal_configs[1]->adc.adc2 
+    tps_min = signal_configs[1]->adc.adc1;
+    tps_max = signal_configs[1]->adc.adc2; 
+    adc_tol = signal_configs[1]->adc.adc_tolerance;
+    adc_num = signal_configs[1]->adc.adc_num;
+    puts("ADC configured\n");
+    puts("MIN: "); puth(tps_min);
+    puts(" MAX: "); puth(tps_max);
+    puts(" TOL: "); puth(adc_tol);
+    puts(" ADC# "); puth(adc_num); puts("\n");
+  } else {
+    puts ("ADC not configured. Please use the config tool to set.\n");
+    state = FAULT_NOT_CONFIGURED;
+  }
 
   puts("**** INTERRUPTS ON ****\n");
   enable_interrupts();
-
-  // main pedal loop
+  adc[0] = 0;
+  adc[1] = 0;
+  // main program loop
   while (1) {
-    pedal();
+    loop();
   }
 
   return 0;

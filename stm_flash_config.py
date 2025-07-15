@@ -11,6 +11,8 @@ GREEN = '\033[32m'
 CHIMERA_PANDA_VID = 0xbbaa
 CHIMERA_PANDA_PIDS = [0xddcc, 0xddee]  # Panda + Chimera variants
 
+SUPPORTED_PRODUCTS = ["Chimera", "Actuator Core"]
+
 #TODO: handle and format unformatted flash
 
 # Unified configuration list (index, label, supported types)
@@ -29,6 +31,11 @@ chimera_config_list = [
   (14, "Cruise Button On/Off",    ["CAN", "ADC"]),
 ]
 
+actuator_core_config_list = [
+  (0,  "System Config",           ["SYS"]),
+  (1,  "TPS Config",              ["ADC"]),
+]
+
 def list_devices():
   context = usb1.USBContext()
   results = []
@@ -40,7 +47,7 @@ def list_devices():
         serial = handle.getSerialNumber()
         manufacturer = handle.getManufacturer()
         product = handle.getProduct()
-        if manufacturer != "commaai":
+        if manufacturer != "commaai" and any(p.lower() in product.lower() for p in SUPPORTED_PRODUCTS):
           results.append({
             "product": product,
             "serial": serial
@@ -71,7 +78,7 @@ if __name__ == "__main__":
   devices = list_devices()
 
   if not devices:
-    print(f"{RED}No Chimera devices found.")
+    print(f"{RED}No supported devices found.")
     sys.exit(1)
 
   print(f"{GREEN}Please select a device to configure:")
@@ -92,6 +99,20 @@ if __name__ == "__main__":
 
   print(f"{GREEN}Selected device: {selected}")
 
+  active_config_list = None
+  selected_product_name = selected.get("product", "").upper()
+
+  if "CHIMERA" in selected_product_name:
+      active_config_list = chimera_config_list
+      print(f"{GREEN}Chimera device detected. Using Chimera config.")
+  elif "ACTUATOR CORE" in selected_product_name:
+      active_config_list = actuator_core_config_list
+      print(f"{GREEN}Actuator Core device detected. Using Actuator Core config.")
+  else:
+      print(f"{RED}Unknown device type. Cannot determine configuration options.")
+      sys.exit(1)
+
+
   device_serial = selected.get("serial")
   print(f"Attempting to connect to device with serial: {device_serial}")
   try:
@@ -104,15 +125,17 @@ if __name__ == "__main__":
       print(f"{RED}Failed to read flash config: {e}")
 
     print("\nAvailable configuration options:")
-    for idx, (flash_idx, label, types) in enumerate(chimera_config_list):
+
+    for idx, (flash_idx, label, types) in enumerate(active_config_list):
       print(f"{idx}: {label} (Flash Index {flash_idx}) - Types: {', '.join(types)}")
 
     while True:
       ln = input("Enter the number of the configuration option to select: ").strip()
       if ln.isdigit():
         i = int(ln)
-        if 0 <= i < len(chimera_config_list):
-          flash_index, label, valid_types = chimera_config_list[i]
+
+        if 0 <= i < len(active_config_list):
+          flash_index, label, valid_types = active_config_list[i]
           print(f"{GREEN}Selected: {label} at index {flash_index}")
           break
       print(f"{RED}Invalid input. Please enter a valid number from the list.")
@@ -152,7 +175,7 @@ if __name__ == "__main__":
       adc_en = int(input("adc_en (0 or 1): ").strip())
       panda.flash_config_write_ADC(flash_index, adc1, adc2, adc_tol, adc_num, adc_en)
       print(f"{GREEN}ADC config written.")
-    
+
     elif config_type == "SYS":
       print("Enter SYS config values:")
       debug_lvl = int(input("debug_lvl: ".strip()))

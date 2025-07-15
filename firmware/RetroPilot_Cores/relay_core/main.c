@@ -22,13 +22,31 @@
 
 #define CAN CAN1
 
-#define PEDAL_USB
 #define DEBUG
 
-#ifdef PEDAL_USB
-  #include "drivers/uart.h"
-  #include "drivers/usb.h"
-#else
+// #ifdef PEDAL_USB
+//   #include "drivers/uart.h"
+//   #include "drivers/usb.h"
+// #else
+
+#define USB_STRING_DESCRIPTORS
+
+#define STRING_DESCRIPTOR_HEADER(size) \
+  (((((size) * 2) + 2) & 0xFF) | 0x0300)
+
+static const uint16_t string_manufacturer_desc[] = {
+  STRING_DESCRIPTOR_HEADER(10),
+  'R','e','t','r','o','P','i','l','o','t'
+};
+
+static const uint16_t string_product_desc[] = {
+  STRING_DESCRIPTOR_HEADER(10),
+  'R','e','l','a','y',' ','C','o','r','e'
+};
+
+#include "chimera/usb.h"
+#include "chimera/chimera.h"
+
   // no serial either
   void puts(const char *a) {
     UNUSED(a);
@@ -39,7 +57,6 @@
   void puth2(unsigned int i) {
     UNUSED(i);
   }
-#endif
 
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
@@ -53,8 +70,6 @@ void __attribute__ ((noinline)) enable_fpu(void) {
   SCB->CPACR |= ((3UL << (10U * 2U)) | (3UL << (11U * 2U)));
 }
 // ********************* serial debugging *********************
-
-#ifdef PEDAL_USB
 
 void debug_ring_callback(uart_ring *ring) {
   char rcv;
@@ -107,8 +122,6 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   }
   return resp_len;
 }
-
-#endif
 
 // ***************************** can port *****************************
 
@@ -324,10 +337,8 @@ int main(void) {
   // init board
   current_board->init();
 
-#ifdef PEDAL_USB
   // enable USB
   usb_init();
-#endif
 
   // pedal stuff
   // dac_init();

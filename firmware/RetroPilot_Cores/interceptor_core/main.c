@@ -132,7 +132,7 @@ void CAN1_TX_IRQ_Handler(void) {
 uint16_t gas_set_0 = 0;
 uint16_t gas_set_1 = 0;
 
-#define MAX_TIMEOUT 5U
+#define MAX_TIMEOUT 20U
 uint32_t timeout = 0;
 uint32_t current_index = 0;
 

@@ -688,7 +688,7 @@ class Panda(object):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, 0, 0, dat)
 
   def flash_config_write_CAN(self, index, can_id, scale_offs, scale_mult, msg_len_bytes, sig_type, shift_amt, sig_len, endian_type, enabled, is_signed):
-    assert 0 <= index < 32
+    # assert 0 <= index < 32
     extra = bytes(6)
     cfg_type = 2  # CFG_TYPE_CAN
 
@@ -708,7 +708,7 @@ class Panda(object):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
   def flash_config_write_ADC(self, index, adc1, adc2, adc_tolerance, adc_num, adc_en):
-    assert 11 <= index < 16
+    # assert 11 <= index < 16
     adc_reserved = bytes(4)
     extra = bytes(7)
     cfg_type = 3  # CFG_TYPE_ADC

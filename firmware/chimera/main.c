@@ -49,12 +49,10 @@ void __attribute__ ((noinline)) enable_fpu(void) {
   FPU->FPCCR |= (FPU_FPCCR_ASPEN_Msk | FPU_FPCCR_LSPEN_Msk);
 }
 
-bool flash_configured = 0;
-
 volatile uint32_t vss_pulse_count = 0;
 volatile uint32_t cps_pulse_count = 0;
-volatile uint16_t vss_dt_us = 0;
-volatile uint16_t cps_dt_us = 0;
+volatile uint32_t vss_dt_us = 0;
+volatile uint32_t cps_dt_us = 0;
 volatile uint32_t vss_last_us = 0;
 volatile uint32_t cps_last_us = 0;
 
@@ -637,7 +635,7 @@ void TIM3_IRQ_Handler(void) {
       dat[5] = (adc[1] >> 0) & 0xFF;
       dat[4] = (adc[0] >> 8) & 0xFF;
       dat[3] = (adc[0] >> 0) & 0xFF;
-      dat[2] = ((buttons[0] << 3) | (buttons[1] << 2) | (buttons[2] << 1) | (buttons[3])) & 0xF;
+      dat[2] = ((buttons[0] << 0) | (buttons[1] << 1) | (buttons[2] << 2) | (buttons[3]) << 3) & 0xF;
       dat[1] = 0;
       dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
 
@@ -775,7 +773,7 @@ void EXTI4_IRQ_Handler(void) {
     vss_pulse_count = (vss_pulse_count + 1) & 0xFFF;
 
     uint32_t now = TIM2->CNT;
-    vss_dt_us = (uint16_t)(now - vss_last_us);  // truncation is okay
+    vss_dt_us = (now - vss_last_us) >> 4;  // truncation is okay
     vss_last_us = now;
   }
 }
@@ -809,7 +807,7 @@ void loop(void) {
   if (ignition_line | ignition_can){
     ignition_on = 1; 
     relay_on=1;
-    if (relay_req_obdc | relay_req_usb | (ignition_cnt < 40)){
+    if (relay_req_obdc | relay_req_usb){ //(ignition_cnt < 40)
       relay_on=1;
     } else {
       relay_on=0;
@@ -832,18 +830,16 @@ int main(void) {
     // flash_unlock();
     // flash_config_format();
     // flash_lock();
-    flash_configured = 0;
     // NVIC_SystemReset();
     puts("FLASH NOT FORMATTED. PLEASE FORMAT BEFORE WRITING A CONFIG.\n");
   } else {
-    flash_configured = 1;
     init_config_pointers(&current_cfg_in_ram);
   }
 
   // ###################################################################
 
-    // Init interrupt table
-    init_interrupts(true);
+  // Init interrupt table
+  init_interrupts(true);
 
   REGISTER_INTERRUPT(CAN1_TX_IRQn, CAN1_TX_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
   REGISTER_INTERRUPT(CAN1_RX0_IRQn, CAN1_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_1)
@@ -971,7 +967,7 @@ int main(void) {
 
   RCC->APB1ENR &= ~RCC_APB1ENR_WWDGEN;
 
-  if (signal_configs[1] != NULL && (signal_configs[1]->sys.iwdg_en & 1)){
+  if (signal_configs[0] != NULL && (signal_configs[0]->sys.iwdg_en & 1)){
     puts("WATCHDOG ENABLED\n");
     watchdog_init();
   } else {

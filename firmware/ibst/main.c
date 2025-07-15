@@ -20,6 +20,8 @@
 #include "gpio.h"
 #include "crc.h"
 
+// TODO: update this with speed, etc from Chimera
+
 // uncomment for usb debugging via debug_console.py
 #define IBST_USB
 #define DEBUG
@@ -105,6 +107,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   UNUSED(hardwired);
   unsigned int resp_len = 0;
   uart_ring *ur = NULL;
+
   switch (setup->b.bRequest) {
     // **** 0xd1: enter bootloader mode
     case 0xd1:
@@ -345,13 +348,13 @@ void CAN1_RX0_IRQ_Handler(void) {
           puts("\n");
         }
         break;
-      case 0x366: ;
-        uint8_t dat2[4];
-        for (int i=0; i<4; i++) {
+      case 118: ;
+        uint8_t dat2[8];
+        for (int i=0; i<7; i++) {
           dat2[i] = GET_BYTE(&CAN1->sFIFOMailBox[0], i);
         }
-        if(dat2[0] == lut_checksum(dat2, 4, crc8_lut_1d)) {
-          current_speed = dat2[3];
+        if(dat2[0] == lut_checksum(dat2, 8, crc8_lut_1d)) {
+          current_speed = ((dat2[1] << 8) | dat2[2]);
         }
         else {
           state = FAULT_BAD_CHECKSUM;
@@ -443,7 +446,7 @@ void CAN2_RX0_IRQ_Handler(void) {
           if (((can2_count_in_3 + 1U) & COUNTER_CYCLE) == index2) {
             //if counter and checksum valid accept commands
             ibst_status = (data2 >> 19) & 0x7;
-            driver_brake_applied = ((dat2[2] & 0x1) | (!((dat2[2] >> 1) & 0x1))); //Sends brake applied if ibooster says brake applied or if there's a fault with the brake sensor, assumes worst case scenario
+            driver_brake_applied = (dat2[2] & 1); // | (!((dat2[2] >> 1) & 0x1))); //Sends brake applied if ibooster says brake applied or if there's a fault with the brake sensor, assumes worst case scenario
             brake_applied = (driver_brake_applied | (output_rod_target > 0x23FU));
             can2_count_in_3++;
           }
@@ -625,7 +628,7 @@ void TIM3_IRQ_Handler(void) {
   if (!sent){
     if ((CAN2->TSR & CAN_TSR_TME2) == CAN_TSR_TME2) {
       uint8_t dat[8]; //sendESP_private1 every 20ms
-      uint16_t ESP_vehicleSpeed = (((current_speed*16) / 9) & 0x3FFF);
+      uint16_t ESP_vehicleSpeed = 0; //(((current_speed*16) / 9) & 0x3FFF);
 
       dat[1] = can2_count_out_2 & COUNTER_CYCLE;
       dat[2] = P_EST_MAX;
@@ -660,21 +663,21 @@ void TIM3_IRQ_Handler(void) {
 
   //send to EON
   if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[5];
+    uint8_t dat0[5];
     brake_ok = (ibst_status == 0x7);
 
-    dat[4] = (can2state & 0xFU) << 4;
-    dat[3] = (output_rod_target >> 8U) & 0x3FU;
-    dat[2] = (brake_ok) | (driver_brake_applied << 1U) | (brake_applied << 2U) | (output_rod_target & 0x3FU);
-    dat[1] = ((state & 0xFU) << 4) | can1_count_out;
-    dat[0] = lut_checksum(dat, 5, crc8_lut_1d);
+    dat0[4] = (can2state & 0xFU) << 4;
+    dat0[3] = (output_rod_target >> 8U) & 0x3FU;
+    dat0[2] = ((output_rod_target & 0x3FU) << 4U) | (brake_applied << 2U) | (driver_brake_applied << 1U) | (brake_ok);
+    dat0[1] = ((state & 0xFU) << 4) | can1_count_out;
+    dat0[0] = lut_checksum(dat0, 5, crc8_lut_1d);
 
-    CAN_FIFOMailBox_TypeDef to_send;
-    to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    to_send.RDHR = dat[4];
-    to_send.RDTR = 5;
-    to_send.RIR = (0x20F << 21) | 1U;
-    can_send(&to_send, 0, false);
+    CAN_FIFOMailBox_TypeDef to_send0;
+    to_send0.RDLR = dat0[0] | (dat0[1] << 8) | (dat0[2] << 16) | (dat0[3] << 24);
+    to_send0.RDHR = dat0[4];
+    to_send0.RDTR = 5;
+    to_send0.RIR = (0x20F << 21) | 1U;
+    can_send(&to_send0, 0, false);
 
     can1_count_out++;
     can1_count_out &= COUNTER_CYCLE;
