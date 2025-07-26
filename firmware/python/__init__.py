@@ -724,6 +724,18 @@ class Panda(object):
                       cfg_type)
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
+  def flash_config_write_VSS(self, index, vss_ppd, is_kmh):
+    cfg_extra = bytes(20) 
+    cfg_type = 4  # CFG_TYPE_VSS
+
+    dat = struct.pack("<HB20sB",
+                      vss_ppd,
+                      is_kmh,
+                      cfg_extra,
+                      cfg_type)
+    print(f"Data length: {len(dat)}")
+    print(f"Data (hex): {dat.hex()}")
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
   def flash_config_read(self):
     MAX_CONFIG_ENTRIES = 32
@@ -795,5 +807,16 @@ class Panda(object):
           "adc_en": adc_en,
           "flags": raw_flags,
         })
+
+      elif cfg_type == 4:
+        vss_ppd, is_kmh, extra, cfg_type = struct.unpack_from("<HB20sB", raw, offset)
+        entries.append({ 
+          "index": i,
+          "cfg_type": "VSS",
+          "vss_ppd": vss_ppd,
+          "is_kmh": is_kmh,
+          "extra": extra,
+        })
+
     return entries
   

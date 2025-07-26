@@ -21,8 +21,9 @@
 #include "gpio.h"
 #include "crc.h"
 
-// kinda janky, but for now uncomment this to use as a pedal interceptor
-// #define IC_GAS
+#include "RetroPilot_Cores/interceptor_core/ic_flash.h"
+
+// TODO: implement new override settings in flash memory
 
 #define CAN CAN1
 
@@ -113,13 +114,9 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 
 // ***************************** can port ***************************
 // addresses to be used on CAN
-#ifdef IC_GAS 
-  #define CAN_GAS_INPUT  0x200
-  #define CAN_GAS_OUTPUT 0x201U
-#else
-  #define CAN_GAS_INPUT  0x300
-  #define CAN_GAS_OUTPUT 0x301U
-#endif
+
+#define CAN_GAS_INPUT  0x300
+#define CAN_GAS_OUTPUT 0x301U
 #define CAN_GAS_SIZE 6
 #define COUNTER_CYCLE 0xFU
 
@@ -131,10 +128,16 @@ void CAN1_TX_IRQ_Handler(void) {
 // two independent values
 uint16_t gas_set_0 = 0;
 uint16_t gas_set_1 = 0;
+int16_t req_mag = 0;;
 
-#define MAX_TIMEOUT 20U
+bool enable = 0;
+uint16_t vehicle_speed = 0;
+
+#define MAX_TIMEOUT 50U
 uint32_t timeout = 0;
+uint32_t timeout_vss = 0;
 uint32_t current_index = 0;
+uint32_t current_index_vss = 0;
 
 // Faults 
 // Hardware
@@ -158,9 +161,9 @@ uint8_t crc8_lut_1d[256];
 
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN->RF0R & CAN_RF0R_FMP0) != 0) {
-    #ifdef DEBUG
-      puts("CAN RX\n");
-    #endif
+    // #ifdef DEBUG
+    //   puts("CAN RX\n");
+    // #endif
     int address = CAN->sFIFOMailBox[0].RIR >> 21;
     if (address == CAN_GAS_INPUT) {
       // softloader entry
@@ -183,21 +186,19 @@ void CAN1_RX0_IRQ_Handler(void) {
       }
       uint16_t value_0 = (dat[2] << 8) | dat[1];
       uint16_t value_1 = (dat[4] << 8) | dat[3];
-      bool enable = ((dat[5] >> 7) & 1U) != 0U;
+      enable = ((dat[5] >> 7) & 1U) != 0U;
       uint8_t index = dat[5] & COUNTER_CYCLE;
       if (dat[0] == lut_checksum(dat, CAN_GAS_SIZE, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
-          #ifdef DEBUG
-            puts("setting gas ");
-            puth(value_0);
-            puts("\n");
-          #endif
+          // #ifdef DEBUG
+          //   puts("setting gas ");
+          //   puth(value_0);
+          //   puts("\n");
+          // #endif
           if (enable) {
-            set_gpio_output(GPIOB, 0, 0);
             gas_set_0 = value_0;
             gas_set_1 = value_1;
           } else {
-            set_gpio_output(GPIOB, 0, 1);
             // clear the fault state if values are 0
             if ((value_0 == 0U) && (value_1 == 0U)) {
               state = NO_FAULT;
@@ -206,6 +207,7 @@ void CAN1_RX0_IRQ_Handler(void) {
             }
             gas_set_0 = 0;
             gas_set_1 = 0;
+            req_mag = 0;
           }
           // clear the timeout
           timeout = 0;
@@ -214,6 +216,22 @@ void CAN1_RX0_IRQ_Handler(void) {
       } else {
         // wrong checksum = fault
         state = FAULT_BAD_CHECKSUM;
+      }
+    }
+    if (address == 0x76) {
+      // SPEED
+      uint8_t dat[8];
+      for (int i=0; i<8; i++) {
+        dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
+      }
+      uint16_t value_1 = (dat[6] << 8) | dat[5];
+      uint8_t index = dat[7] & COUNTER_CYCLE;
+      if (dat[0] == lut_checksum(dat, 8, crc8_lut_1d)) {
+        if (((current_index_vss + 1U) & COUNTER_CYCLE) == index) {
+          vehicle_speed = value_1;
+          timeout_vss = 0;
+        }
+        current_index_vss = index;
       }
     }
     // next
@@ -229,7 +247,7 @@ void CAN1_SCE_IRQ_Handler(void) {
 uint32_t pdl0 = 0;
 uint32_t pdl1 = 0;
 bool override = 0;
-uint32_t magnitude = 0;
+int32_t magnitude = 0;
 
 unsigned int pkt_idx = 0;
 
@@ -244,21 +262,31 @@ void TIM3_IRQ_Handler(void) {
     puth(pdl1);
     puts(" magnitude: ");
     puth(magnitude);
+    puts(" Vehicle Speed: ");
+    puth(vehicle_speed);
+    puts(" torque_scale: ");
+    puth(get_torque_scale_percent(vehicle_speed));
+    puts(" req_mag: ");
+    puth(req_mag);
+    puts(" enable: ");
+    puth(enable);
     puts("\n");
   #endif
 
   // check timer for sending the user pedal and clearing the CAN
   if ((CAN->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[6];
+    uint8_t dat[8];
     dat[1] = (pdl0 >> 0) & 0xFFU;
     dat[2] = (pdl0 >> 8) & 0xFFU;
     dat[3] = (pdl1 >> 0) & 0xFFU;
     dat[4] = (pdl1 >> 8) & 0xFFU;
-    dat[5] = ((state & 0xFU) << 4) | pkt_idx;
+    dat[5] = override;
+    dat[6] = 0;
+    dat[7] = ((state & 0xFU) << 4) | pkt_idx;
     dat[0] = lut_checksum(dat, CAN_GAS_SIZE, crc8_lut_1d);
     CAN->sTxMailBox[0].TDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    CAN->sTxMailBox[0].TDHR = dat[4] | (dat[5] << 8);
-    CAN->sTxMailBox[0].TDTR = 6;  // len of packet is 5
+    CAN->sTxMailBox[0].TDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
+    CAN->sTxMailBox[0].TDTR = 8;  // len of packet is 5
     CAN->sTxMailBox[0].TIR = (CAN_GAS_OUTPUT << 21) | 1U;
     ++pkt_idx;
     pkt_idx &= COUNTER_CYCLE;
@@ -280,8 +308,18 @@ void TIM3_IRQ_Handler(void) {
   if (timeout == MAX_TIMEOUT) {
     state = FAULT_TIMEOUT;
     set_gpio_output(GPIOB, 0, 1);
+    enable = 0;
   } else {
     timeout += 1U;
+  }
+
+  if (timeout_vss == MAX_TIMEOUT) {
+    state = FAULT_TIMEOUT;
+    vehicle_speed = 0;
+    set_gpio_output(GPIOB, 0, 1);
+    enable = 0;
+  } else {
+    timeout_vss += 1U;
   }
 }
 
@@ -292,30 +330,27 @@ void pedal(void) {
   pdl0 = adc_get(12);
   pdl1 = adc_get(13);
 
-#ifdef IC_GAS
-  // write the pedal to the DAC
-  if (state == NO_FAULT) {
-    dac_set(0, MAX(gas_set_0, pdl0));
-    dac_set(1, MAX(gas_set_1, pdl1));
-  } else {
-    dac_set(0, pdl0);
-    dac_set(1, pdl1);
-  }
-#else
-  // TODO: set this some other way. override should be set by the user
   magnitude = ABS((int32_t) pdl0 - (int32_t) pdl1);
-  override = magnitude > 0x900;
-  // 0x7FF + pdl0
+  override = ABS(magnitude) > 0x150;
+
+  req_mag = (gas_set_0 - gas_set_1);
+  uint16_t scale_percent = get_torque_scale_percent(vehicle_speed);
+  uint16_t scaled_torque = (req_mag * scale_percent) / 100;
+
+  if (ABS(req_mag) > 400){
+    req_mag = 0;
+  } 
+
   // write the pedal to the DAC
-  if (state == NO_FAULT) {
-    dac_set(0, (override ? pdl0 : gas_set_1));
-    dac_set(1, (override ? pdl1 : gas_set_0));
+  if ((state == NO_FAULT) && enable) {
+    set_gpio_output(GPIOB, 0, 0);
+    dac_set(0, (pdl0 - scaled_torque));
+    dac_set(1, (pdl1 + scaled_torque));
   } else {
+    set_gpio_output(GPIOB, 0, 1);
     dac_set(0, pdl0);
     dac_set(1, pdl1);
   }
-#endif
-
   watchdog_feed();
 }
 
@@ -352,6 +387,8 @@ int main(void) {
   // pedal stuff
   dac_init();
   adc_init();
+
+  torque_lut_init();
 
   // init can
   bool llcan_speed_set = llcan_set_speed(CAN1, 5000, false, false);

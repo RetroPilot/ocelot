@@ -53,7 +53,7 @@ if __name__ == "__main__":
           if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
             ln = sys.stdin.readline().strip()
             if (ln == 'r'):
-              cfg = panda.flash_config_read()
+              cfg = panda.reset()
               print(cfg)
             elif (ln == 'f'):
               panda.flash_wipe_config()

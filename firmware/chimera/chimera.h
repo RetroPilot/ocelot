@@ -7,9 +7,11 @@
 #define CONFIG_FLASH_SECTOR 5
 #define CONFIG_FLASH_ADDR 0x08020000
 
-#define CFG_TYPE_SYS 1
-#define CFG_TYPE_CAN 2
-#define CFG_TYPE_ADC 3
+#define CFG_TYPE_SYS  1
+#define CFG_TYPE_CAN  2
+#define CFG_TYPE_ADC  3
+#define CFG_TYPE_VSS  4
+#define GFG_TYPE_GPIO 5
 
 #include <stdint.h>
 #include <stddef.h>
@@ -49,6 +51,19 @@ typedef struct __attribute__((packed, aligned(1))) {
       uint8_t adc_en;
       uint8_t extra[7];
     } adc;
+
+    struct __attribute__((packed)) {
+      uint16_t vss_ppd;
+      uint8_t is_km;
+      uint8_t extra[20];
+    } vss;
+
+    // struct __attribute__((packed)) {
+    //   uint8_t gpio_in;
+    //   uint8_t gpio_out;
+    //   uint8_t extra[21];
+    // } gpio;
+
   };
   uint8_t cfg_type;
 } flash_config_t;
@@ -62,7 +77,7 @@ typedef struct __attribute__((packed)) {
 } config_block_t;
 
 // CAN signal config pointers
-const flash_config_t *signal_configs[MAX_CONFIG_ENTRIES];
+const flash_config_t *signal_configs[MAX_CONFIG_ENTRIES] = { NULL };
 
 // ********************** flash write **********************
 void flash_unlock(void);
@@ -238,7 +253,7 @@ bool validate_flash_config(const config_block_t *cfg) {
 
   for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
     const flash_config_t *e = &cfg->entries[i];
-    if (e->cfg_type > CFG_TYPE_ADC) {
+    if (e->cfg_type > CFG_TYPE_VSS) {
       puts("Invalid config: unknown cfg_type at index ");
       puth(i);
       puts("\n");
@@ -309,15 +324,3 @@ static inline int32_t extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOM
   val = val * cfg->can.scale_mult + cfg->can.scale_offs;
   return val;
 }
-
-// static inline int32_t extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOMailBox_TypeDef *msg) {
-//   uint64_t can_raw = 0;
-//   for (int i = 0; i < cfg->can.msg_len_bytes; i++) {
-//     can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFF;
-//     can_raw |= GET_BYTE(msg, i);
-//   }
-
-//   int32_t val = (can_raw >> cfg->can.shift_amt) & ((1 << cfg->can.sig_len) - 1);
-//   val = val * cfg->can.scale_mult + cfg->can.scale_offs;
-//   return val;
-// }

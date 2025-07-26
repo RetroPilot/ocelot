@@ -55,6 +55,7 @@ volatile uint32_t vss_dt_us = 0;
 volatile uint32_t cps_dt_us = 0;
 volatile uint32_t vss_last_us = 0;
 volatile uint32_t cps_last_us = 0;
+uint16_t vss = 0;
 
 uint32_t adc[2];
 uint32_t adc_cmp = 0;
@@ -70,7 +71,6 @@ bool brake_pressed = 0;
 
 uint32_t steer_angle_rate = 0;
 uint32_t steer_angle = 0;
-uint32_t vss_can = 0;
 uint32_t engine_rpm_can = 0;
 bool brake_pressed_can = 0;
 
@@ -492,7 +492,7 @@ void CAN3_RX0_IRQ_Handler(void) {
 
     cfg = signal_configs[4]; // VEHICLE_SPEED
     if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
-      vss_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
+      vss = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
     }
 
     cfg = signal_configs[5]; // IGNITION_CAN
@@ -574,7 +574,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 6;
       to_send.RIR = (80 << 21) | 1U;
 
-      if (sys_cfg->sys.can_out_en & 1){
+      if (sys_cfg && sys_cfg->sys.can_out_en & 1){
         send_can1_message(&to_send, &pkt_idx1);
       }
       break;
@@ -597,7 +597,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (117 << 21) | 1U;
 
-      if (sys_cfg->sys.can_out_en & 2) {
+      if (sys_cfg && sys_cfg->sys.can_out_en & 2) {
         send_can1_message(&to_send, &pkt_idx2);
       }
       break;
@@ -608,8 +608,8 @@ void TIM3_IRQ_Handler(void) {
       uint8_t dat[8];
       cfg = signal_configs[3];
       dat[7] = ((cfg->can.enabled & 1) << 4) | pkt_idx3;
-      dat[6] = (vss_can >> 8) & 0xFF;
-      dat[5] = (vss_can >> 0) & 0xFF;
+      dat[6] = (vss >> 8) & 0xFF;
+      dat[5] = (vss >> 0) & 0xFF;
       dat[4] = 0;
       dat[3] = (vss_pulse_count >> 0) & 0xFF;
       dat[2] = (vss_dt_us >> 8) & 0xFF;
@@ -621,7 +621,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (118 << 21) | 1U;
 
-      if (sys_cfg->sys.can_out_en & 4){ 
+      if (sys_cfg && sys_cfg->sys.can_out_en & 4){ 
         send_can1_message(&to_send, &pkt_idx3);
       }
       break;
@@ -644,7 +644,7 @@ void TIM3_IRQ_Handler(void) {
       to_send.RDTR = 8;
       to_send.RIR = (256 << 21) | 1U;
 
-      if (sys_cfg->sys.can_out_en & 8){ 
+      if (sys_cfg && sys_cfg->sys.can_out_en & 8){ 
         send_can1_message(&to_send, &pkt_idx4);
       }
       break;
@@ -710,6 +710,8 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     cps_dt_us = 0;  
   }
 
+  adc[0] = adc_get(12); // ADC1
+  adc[1] = adc_get(13);  // ADC2
   for (int i = 0; i <= 3; i++) {
     const flash_config_t *cfg = signal_configs[i + 11];
     if (!cfg || cfg->cfg_type != CFG_TYPE_ADC || !(cfg->adc.adc_en & 1)) continue;
@@ -754,6 +756,18 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     puts(" ADC1 RAW: ");
     puth(adc[1]);
     puts("\n");
+
+    puts("IGN: ");
+    puth(ignition_line | ignition_can);
+    puts("\n");
+
+    puts("VSS config type: ");
+    puth(signal_configs[4]->cfg_type);
+    puts("vss: ");
+    puth(vss);
+    puts(" vss_pulse: ");
+    puth(vss_dt_us);
+    puts("\n");
   }
 
   // for (int i=0; i<4; i++){
@@ -773,7 +787,7 @@ void EXTI4_IRQ_Handler(void) {
     vss_pulse_count = (vss_pulse_count + 1) & 0xFFF;
 
     uint32_t now = TIM2->CNT;
-    vss_dt_us = (now - vss_last_us) >> 4;  // truncation is okay
+    vss_dt_us = (now - vss_last_us);  // truncation is okay
     vss_last_us = now;
   }
 }
@@ -790,31 +804,50 @@ void EXTI9_5_IRQ_Handler(void) {
   }
 }
 
+// vss kph helper function
+
+uint32_t compute_vss_kph(uint32_t pulse_width_us, uint32_t vss_ppm) {
+    if (pulse_width_us == 0) {
+        return 0.0f;
+    }
+
+    float pulse_width_s = (float)pulse_width_us / 1000000.0f;
+    float frequency_hz = 1.0f / pulse_width_s;
+    float speed_kph = ((frequency_hz * 3600) / vss_ppm) * 160.9;
+
+    return (uint32_t)speed_kph;
+}
+
 // ***************************** main code *****************************
 
 // This function is the main application. It is run in a while loop from main() and is interrupted by those specified in main().
 void loop(void) {
 
-  adc[0] = adc_get(12); // ADC1
-  adc[1] = adc_get(13);  // ADC2
   // read/write
   ignition_line = !get_gpio_input(GPIOA, 3);
   relay_req_obdc = !get_gpio_input(GPIOA, 2);
   brake_pressed = !get_gpio_input(GPIOA, 6);
-  set_gpio_output(GPIOB, 0, relay_on);
-  set_gpio_output(GPIOB, 1, !ignition_on);
 
   if (ignition_line | ignition_can){
     ignition_on = 1; 
     relay_on=1;
-    if (relay_req_obdc | relay_req_usb){ //(ignition_cnt < 40)
-      relay_on=1;
-    } else {
-      relay_on=0;
-    }
+    // if (relay_req_obdc | relay_req_usb){ //(ignition_cnt < 40)
+    //   relay_on=1;
+    // } else {
+    //   relay_on=0;
+    // }
   } else {
     ignition_on = 0;
     relay_on = 0;
+  }
+
+  set_gpio_output(GPIOB, 0, relay_on);
+  set_gpio_output(GPIOB, 1, !ignition_on);
+
+  const flash_config_t *cfg = NULL;
+  cfg = signal_configs[4];
+  if (cfg && cfg->cfg_type == CFG_TYPE_VSS) {
+    vss = compute_vss_kph(vss_dt_us, 4000); // TODO: param config for PPM
   }
 
   watchdog_feed();
