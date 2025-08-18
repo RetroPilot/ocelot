@@ -170,14 +170,24 @@ void usb_cb_ep2_out(void *usbdata, int len, bool hardwired) {
   // Clear the buffer after processing for this endpoint
   memset(usbdata, 0, len);
 }
+
 // send on CAN
 void usb_cb_ep3_out(void *usbdata, int len, bool hardwired) {
-  UNUSED(usbdata);
-  UNUSED(len);
   UNUSED(hardwired);
-  // Clear the buffer after processing for this endpoint
-  memset(usbdata, 0, len);
+  int dpkt = 0;
+  uint32_t *d32 = (uint32_t *)usbdata;
+  for (dpkt = 0; dpkt < (len / 4); dpkt += 4) {
+    CAN_FIFOMailBox_TypeDef to_push;
+    to_push.RDHR = d32[dpkt + 3];
+    to_push.RDLR = d32[dpkt + 2];
+    to_push.RDTR = d32[dpkt + 1];
+    to_push.RIR = d32[dpkt];
+
+    uint8_t bus_number = (to_push.RDTR >> 4) & CAN_BUS_NUM_MASK;
+    can_send(&to_push, bus_number, false);
+  }
 }
+
 void usb_cb_ep3_out_complete() {
   if (can_tx_check_min_slots_free(MAX_CAN_MSGS_PER_BULK_TRANSFER)) {
     usb_outep3_resume_if_paused();

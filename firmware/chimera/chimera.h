@@ -20,7 +20,6 @@ typedef struct __attribute__((packed, aligned(1))) {
   union {
     uint8_t raw[23];
 
-    // Add __attribute__((packed)) to each inner struct
     struct __attribute__((packed)) {
       uint8_t debug_lvl;
       uint8_t can_out_en;
