@@ -11,7 +11,7 @@ GREEN = '\033[32m'
 CHIMERA_PANDA_VID = 0xbbaa
 CHIMERA_PANDA_PIDS = [0xddcc, 0xddee]  # Panda + Chimera variants
 
-SUPPORTED_PRODUCTS = ["Chimera", "Actuator Core"]
+SUPPORTED_PRODUCTS = ["Chimera", "Actuator Core", "Relay Core"]
 
 #TODO: handle and format unformatted flash
 
@@ -35,6 +35,51 @@ actuator_core_config_list = [
   (0,  "System Config",           ["SYS"]),
   (1,  "TPS Config",              ["ADC"]),
 ]
+
+relay_core_config_list = [
+  (0, "System Config",            ["SYS"]),
+  (1, "Relay Config",             ["RELAY"]),
+]
+
+relay_core_config_tags = [
+  "TURN_L_FRONT",
+  "DRL_L",
+  "HEAD_L",
+  "BRIGHT_L",
+  "FOG_L_FRONT",
+  "TURN_R_FRONT",
+  "DRL_R",
+  "HEAD_R",
+  "BRIGHT_R",
+  "FOG_R_FRONT",
+  "TURN_L_REAR",
+  "BRAKE_L",
+  "FOG_L_REAR",
+  "REVERSE_L",
+  "TAIL_L",
+  "TURN_R_REAR",
+  "BRAKE_R",
+  "FOG_R_REAR",
+  "REVERSE_R",
+  "TAIL_R",
+  "BRAKE_CENTER",
+  "SP_1",
+  "SP_2",
+  "SP_3",
+  "SP_4",
+  "SP_5",
+  "SP_6",
+  "SP_7",
+  "SP_8",
+  "SP_9",
+  "SP_10",
+]
+
+def get_relay_label_from_type(type_val):
+  for i, label in enumerate(relay_core_config_tags):
+    if type_val & (1 << i):
+      return label
+  return "UNKNOWN"
 
 def list_devices():
   context = usb1.USBContext()
@@ -73,6 +118,9 @@ def print_config_entries(entries):
       print("SYS_PARAMS: ", e)
     elif cfg_type == "VSS":
       print("VSS: ", e)
+    elif cfg_type == "RELAY":
+      label = get_relay_label_from_type(e['label'])
+      print(f"[{idx}] RELAY: {label}, can_cmp={e['can_cmp_val']}, gpio_en={e['gpio_en']}, gpio_in={e['gpio_in']}, can_addr=0x{e['can_addr']:X}, sig_len={e['sig_len']}, shift={e['shift_amt']}")
     else:
       print(f"[{idx}] UNKNOWN or DISABLED")
 
@@ -110,6 +158,9 @@ if __name__ == "__main__":
         print(f"{GREEN}Chimera device detected. Using Chimera config.")
     elif "ACTUATOR CORE" in selected_product_name:
         active_config_list = actuator_core_config_list
+        print(f"{GREEN}Actuator Core device detected. Using Actuator Core config.")
+    elif "RELAY CORE" in selected_product_name:
+        active_config_list = relay_core_config_list
         print(f"{GREEN}Actuator Core device detected. Using Actuator Core config.")
     else:
         print(f"{RED}Unknown device type. Cannot determine configuration options.")
@@ -204,6 +255,31 @@ if __name__ == "__main__":
         panda.flash_config_write_VSS(flash_index, vss_ppd, is_kph)
         print(f"{GREEN}VSS config written.")
 
+      elif config_type == "RELAY":
+        relay_num = int(input("Select relay number (1-8): ").strip())
+        print("Available relay labels:")
+        for idx, label in enumerate(relay_core_config_tags):
+          print(f"{idx}: {label}")
+        
+        while True:
+          ln = input("Enter the number of the relay label to select: ").strip()
+          if ln.isdigit():
+            i = int(ln)
+            if 0 <= i < len(relay_core_config_tags):
+              selected_label = relay_core_config_tags[i]
+              print(f"{GREEN}Selected: {selected_label}")
+              break
+          print(f"{RED}Invalid input. Please enter a valid number from the list.")
+        
+        gpio_en = int(input("gpio_en (0 or 1): ").strip())
+        gpio_in = int(input("gpio_in: ").strip())
+        can_addr = int(input("can_addr (hex, e.g. 0x123). A value of 0 disables CAN input: ").strip(), 0)
+        sig_len = int(input("sig_len: ").strip())
+        shift_amt = int(input("shift_amt: ").strip())
+        can_cmp = int(input("can_cmp_val: ").strip(), 0)
+        
+        panda.flash_config_write_RELAY(relay_num, selected_label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp, bytes(10), 5)
+        print(f"{GREEN}RELAY config written.")
     except Exception as e:
       import traceback
       print(f"{RED}Error during operation: {e}")

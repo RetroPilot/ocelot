@@ -24,11 +24,6 @@
 
 #define DEBUG
 
-// #ifdef PEDAL_USB
-//   #include "drivers/uart.h"
-//   #include "drivers/usb.h"
-// #else
-
 #define USB_STRING_DESCRIPTORS
 
 #define STRING_DESCRIPTOR_HEADER(size) \
@@ -44,19 +39,9 @@ static const uint16_t string_product_desc[] = {
   'R','e','l','a','y',' ','C','o','r','e'
 };
 
+#include "drivers/uart.h"
 #include "chimera/usb.h"
 #include "chimera/chimera.h"
-
-  // no serial either
-  void puts(const char *a) {
-    UNUSED(a);
-  }
-  void puth(unsigned int i) {
-    UNUSED(i);
-  }
-  void puth2(unsigned int i) {
-    UNUSED(i);
-  }
 
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
@@ -75,6 +60,13 @@ void debug_ring_callback(uart_ring *ring) {
   char rcv;
   while (getc(ring, &rcv) != 0) {
     (void)putc(ring, rcv);
+  }
+}
+
+// callback function to handle flash writes over USB
+void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
+  if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(flash_config_t))) {
+    handle_deferred_config_write();
   }
 }
 
@@ -101,6 +93,13 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   UNUSED(hardwired);
   unsigned int resp_len = 0;
   uart_ring *ur = NULL;
+
+  // Store the setup packet and data pointer for deferred processing if needed
+  // This must be done for all commands that might involve an OUT data phase
+  // and need deferred processing.
+  memcpy(&last_setup_pkt, setup, sizeof(USB_Setup_TypeDef));
+  last_usb_data_ptr = usbdata; // Save the pointer to the buffer
+
   switch (setup->b.bRequest) {
     // **** 0xe0: uart read
     case 0xe0:
@@ -114,6 +113,52 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         ++resp_len;
       }
       break;
+    case 0xFD: {
+      flash_unlock();
+      flash_config_format();
+      flash_lock();
+      break;
+    }
+    case 0xFE: {  // Write config entry
+      puts("0xFE command received. Deferring write...\n");
+      if (setup->b.wLength.w == sizeof(flash_config_t) &&
+          setup->b.wValue.w < MAX_CONFIG_ENTRIES) {
+        config_write_pending = true;
+      } else {
+        puts("\n len: ");
+        puth(setup->b.wLength.w);
+        puts("\n expected: ");
+        puth(sizeof(flash_config_t));
+        puts("\n value: ");
+        puth(setup->b.wValue.w);
+        puts("0xFE command: Invalid length or index. Not deferring.\n");
+      }
+      break;
+    }
+    case 0xFF: {  // Chunked config read
+      uint16_t offset = setup->b.wValue.w;
+      uint16_t length = setup->b.wLength.w;
+
+      // Make sure we're not reading past the end of the config block
+      const uint8_t *flash_bytes = (const uint8_t *)CONFIG_FLASH_ADDR;
+      if (*(uint32_t *)flash_bytes == FLASH_CONFIG_MAGIC) {
+        uint16_t max_len = MIN(length, MAX_RESP_LEN);  // cap to USB response size
+        if (offset < sizeof(config_block_t)) {
+          uint16_t remaining = sizeof(config_block_t) - offset;
+          uint16_t copy_len = MIN(remaining, max_len);
+          memcpy(resp, flash_bytes + offset, copy_len);
+          resp_len = copy_len;
+          // puts("Chunked config block read\n");
+        } else {
+          puts("Offset out of range in config read\n");
+        }
+      } else {
+        puts("No valid config block in flash\n");
+        memset(resp, 0xFF, MIN(length, MAX_RESP_LEN));
+        resp_len = MIN(length, MAX_RESP_LEN);
+      }
+      break;
+    }
     default:
       puts("NO HANDLER ");
       puth(setup->b.bRequest);
@@ -128,7 +173,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 // addresses to be used on CAN
 #define CAN_OUTPUT 0x601U
 #define CAN_INPUT  0x600U
-#define CAN_SIZE 4
+#define CAN_SIZE 5
 #define COUNTER_CYCLE 0xFU
 
 void CAN1_TX_IRQ_Handler(void) {
@@ -158,21 +203,16 @@ uint8_t state = FAULT_STARTUP;
 const uint8_t crc_poly = 0x1D;  // standard crc8
 uint8_t crc8_lut_1d[256];
 
-uint8_t gpio_lights = 0;
-uint8_t can_lights = 0;
+uint8_t gpio_state= 0;
+uint32_t relay_ctrl_can = 0;
 
-#define L_TURN     1U << 15U
-#define R_TURN     1U << 14U
-#define TAIL       1U << 13U
-#define HEADLIGHTS 1U << 12U
-#define HIBEAM     (1U << 11U) | HEADLIGHTS
-
-void set_relays(uint8_t relay_buf){
-  set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U);  // LTURN
-  set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);  // RTURN
-  set_gpio_output(GPIOA,  6, (relay_buf >> 2U) & 1U);  // TAIL
-  set_gpio_output(GPIOA,  7, (relay_buf >> 3U) & 1U);  // HEAD
-  set_gpio_output(GPIOB,  0, (relay_buf >> 4U) & 1U);  // HIBEAM
+void set_relays(uint8_t relays){
+  uint8_t relay_buf = ~relays;
+  set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U); 
+  set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);
+  set_gpio_output(GPIOA,  6, (relay_buf >> 2U) & 1U);
+  set_gpio_output(GPIOA,  7, (relay_buf >> 3U) & 1U);
+  set_gpio_output(GPIOB,  0, (relay_buf >> 4U) & 1U);
   set_gpio_output(GPIOB,  1, (relay_buf >> 5U) & 1U);
   set_gpio_output(GPIOB, 10, (relay_buf >> 6U) & 1U);
   set_gpio_output(GPIOB, 12, (relay_buf >> 7U) & 1U);
@@ -180,7 +220,7 @@ void set_relays(uint8_t relay_buf){
 
 uint8_t get_inputs(void){
   uint8_t input_buf = 0;
-  input_buf |= get_gpio_input(GPIOC, 2) << 0U; // GPIOC2
+  input_buf |= get_gpio_input(GPIOC, 2) << 0U;
   input_buf |= get_gpio_input(GPIOC, 3) << 1U;
   input_buf |= get_gpio_input(GPIOC, 4) << 2U;
   input_buf |= get_gpio_input(GPIOC, 5) << 3U;
@@ -188,7 +228,7 @@ uint8_t get_inputs(void){
   input_buf |= get_gpio_input(GPIOC, 7) << 5U;
   input_buf |= get_gpio_input(GPIOC, 8) << 6U;
   input_buf |= get_gpio_input(GPIOC, 9) << 7U;
-  return input_buf;
+  return ~input_buf;
 }
 
 void CAN1_RX0_IRQ_Handler(void) {
@@ -216,15 +256,15 @@ void CAN1_RX0_IRQ_Handler(void) {
       for (int i=0; i<CAN_SIZE; i++) {
         dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
       }
-      uint8_t value_0 = dat[1];
-      bool enable = ((dat[3] >> 7) & 1U) != 0U;
-      uint8_t index = dat[3] & COUNTER_CYCLE;
+      uint32_t value_0 = dat[1] | dat[2] << 8 | dat[3] << 16;
+      bool enable = ((dat[4] >> 7) & 1U) != 0U;
+      uint8_t index = dat[4] & COUNTER_CYCLE;
       if (dat[0] == lut_checksum(dat, CAN_SIZE, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
           timeout = 0;
           state = NO_FAULT;
           if (enable) {
-            can_lights = value_0;
+            relay_ctrl_can = value_0;
           } else {
             // clear the fault state if values are 0 and the incoming request is valid
             if (value_0 == 0U) {
@@ -232,7 +272,7 @@ void CAN1_RX0_IRQ_Handler(void) {
             } else {
               state = FAULT_INVALID;
             }
-            can_lights = 0;
+            relay_ctrl_can = 0;
           }
         }
         current_index = index;
@@ -257,11 +297,11 @@ void TIM3_IRQ_Handler(void) {
 
   // check timer for sending the IO state and clearing the CAN
   if ((CAN->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[CAN_SIZE];
-    dat[1] = (~gpio_lights >> 0) & 0xFFU;
-    dat[2] = (~gpio_lights >> 8) & 0xFFU;
+    uint8_t dat[4];
+    dat[1] = (~gpio_state >> 0) & 0xFFU;
+    dat[2] = (~gpio_state >> 8) & 0xFFU;
     dat[3] = ((state & 0xFU) << 4) | pkt_idx;
-    dat[0] = lut_checksum(dat, CAN_SIZE, crc8_lut_1d);
+    dat[0] = lut_checksum(dat, 4, crc8_lut_1d);
     CAN->sTxMailBox[0].TDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
     CAN->sTxMailBox[0].TDHR = 0;
     CAN->sTxMailBox[0].TDTR = 4;  // len of packet is 5
@@ -287,35 +327,71 @@ void TIM3_IRQ_Handler(void) {
   }
   timeout &= 0xFFU; // keep it in bounds
 
-  #ifdef DEBUG
-  puts("STATE: ");
-  puth(state);
-  puts(" GPIO: ");
-  puth(gpio_lights);
-  puts(" CAN: ");
-  puth(can_lights);
-  puts("\n");
-  #endif
+  const flash_config_t *cfg = signal_configs[0];
+  if (cfg && (cfg->sys.debug_lvl & 1)){
+    puts("STATE: ");
+    puth(state);
+    puts(" GPIO: ");
+    puth(gpio_state);
+    puts(" CAN: ");
+    puth(relay_ctrl_can);
+    puts("\n");
+  }
 
 }
 
 // ***************************** main code *****************************
-#define TPS_THRES 20
 void loop(void) {
-  gpio_lights = get_inputs();
+  gpio_state = get_inputs();
 
   if (state != NO_FAULT) {
-    can_lights = 0;
+    relay_ctrl_can = 0;
   }
 
-  uint8_t lights = ~gpio_lights | can_lights;
+  uint8_t relay_ctrl = 0;
 
-  set_relays(~lights);
+  // check relay configs and set relays
+  for (int i = 1; i < 9; i++) {
+    const flash_config_t *cfg = signal_configs[i];
+    if (!cfg || cfg->cfg_type != GFG_TYPE_RELAY) continue;
+
+    // GPIO
+    if (cfg->relay.gpio_en & 1U) {
+      if (gpio_state == cfg->relay.gpio_in){
+        relay_ctrl |= (1U << (i-1));
+      }
+    }
+
+    // CAN_CTRL_RP
+    if (cfg->relay.type & 1U){
+      if (relay_ctrl_can == cfg->relay.type){
+        relay_ctrl |= (1U << (i-1));
+      }
+    }
+  }
+
+  set_relays(relay_ctrl);
 
   watchdog_feed();
 }
 
 int main(void) {
+
+  // ######################## FLASH HANDLING ###########################
+  config_block_t current_cfg_in_ram;
+  memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
+
+  if (!validate_flash_config(&current_cfg_in_ram)) {
+    // flash_unlock();
+    // flash_config_format();
+    // flash_lock();
+    // NVIC_SystemReset();
+    puts("FLASH NOT FORMATTED. PLEASE FORMAT BEFORE WRITING A CONFIG.\n");
+  } else {
+    init_config_pointers(&current_cfg_in_ram);
+  }
+  // ###################################################################
+
   // Init interrupt table
   init_interrupts(true);
 
@@ -401,12 +477,18 @@ int main(void) {
   set_gpio_output_type(GPIOB, 10, OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
 
-  set_gpio_output(GPIOB, 0, 0);
+  // set_gpio_output(GPIOB, 0, 0);
 
-  set_relays(1);
+  // set_relays(1);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
-  watchdog_init();
+
+  if (signal_configs[0] != NULL && (signal_configs[0]->sys.iwdg_en & 1)){
+    puts("WATCHDOG ENABLED\n");
+    watchdog_init();
+  } else {
+    puts("WATCHDOG DISABLED\n");
+  }
 
   puts("**** INTERRUPTS ON ****\n");
   enable_interrupts();

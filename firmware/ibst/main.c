@@ -24,7 +24,7 @@
 
 // uncomment for usb debugging via debug_console.py
 #define IBST_USB
-#define DEBUG
+// #define DEBUG
 
 #ifdef IBST_USB
   #include "drivers/uart.h"
@@ -53,6 +53,7 @@ void __initialize_hardware_early(void) {
 #ifdef IBST_USB
 
 #include "ibst/can.h"
+
 
 // ********************* usb debugging *********************
 void debug_ring_callback(uart_ring *ring) {
@@ -204,7 +205,7 @@ bool sent;
 
 // OUTPUTS
 // 0x38B
-#define P_EST_MAX 0
+#define P_EST_MAX 250
 #define P_EST_MAX_QF 1
 #define VEHICLE_QF 1
 #define IGNITION_ON 0
@@ -220,7 +221,7 @@ bool q_target_ext_qf = 0;
 #define P_TARGET_DRIVER 0
 #define P_TARGET_DRIVER_QF 0
 #define ABS_ACTIVE 0
-#define P_MC 0
+#define P_MC 0 //682
 #define P_MC_QF 1
 
 // INPUTS
@@ -555,10 +556,10 @@ void TIM3_IRQ_Handler(void) {
     state = FAULT_INVALID;
   }
 
-  if (brake_applied) { // handle relay
-    set_gpio_output(GPIOB, 13, 1);
+  if (brake_applied) { // handle 12V_OUT
+    set_gpio_output(GPIOA, 1, 1);
   } else {
-    set_gpio_output(GPIOB, 13, 0);
+    set_gpio_output(GPIOA, 1, 0);
   }
 
   if (driver_brake_applied){ // reset values
@@ -567,14 +568,15 @@ void TIM3_IRQ_Handler(void) {
   }
 
   // cmain loop for sending 100hz messages
+  // 0x38D
   if ((CAN2->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
     uint8_t dat[8]; //sendESP_private3
     uint16_t pTargetDriver = P_TARGET_DRIVER * 4;
     dat[2] = pTargetDriver & 0xFFU;
     dat[3] = (pTargetDriver & 0x3U) >> 8;
     dat[4] = 0x0;
-    dat[5] = 0x0;
-    dat[6] = (uint8_t) P_MC_QF << 5;
+    dat[5] = (P_MC << 3U) & 0xFF;
+    dat[6] = ((P_MC_QF << 5) | (P_MC >> 5U)) & 0xFF;
     dat[7] = 0x0;
     dat[1] = can2_count_out_1;
     dat[0] = lut_checksum(dat, 8, crc8_lut_1d);
@@ -594,6 +596,8 @@ void TIM3_IRQ_Handler(void) {
       puts("CAN2 MISS1\n");
     #endif
   }
+
+  //0x38C
   if ((CAN2->TSR & CAN_TSR_TME1) == CAN_TSR_TME1) {
     uint8_t dat[8]; //sendESP_private2
     uint16_t p_limit_external = P_LIMIT_EXTERNAL * 2;
@@ -625,6 +629,8 @@ void TIM3_IRQ_Handler(void) {
       puts("CAN2 MISS2\n");
     #endif
   }
+
+  //0x38B
   if (!sent){
     if ((CAN2->TSR & CAN_TSR_TME2) == CAN_TSR_TME2) {
       uint8_t dat[8]; //sendESP_private1 every 20ms
@@ -730,7 +736,6 @@ void TIM3_IRQ_Handler(void) {
 void ibst(void) {
   // read/write
   watchdog_feed();
-
 }
 
 int main(void) {
@@ -794,14 +799,19 @@ int main(void) {
   timer_init(TIM3, 7);
   NVIC_EnableIRQ(TIM3_IRQn);
 
-  // power on ibooster. needs to power on AFTER sending CAN to prevent ibst state from being 4
-  set_gpio_mode(GPIOB, 12, MODE_OUTPUT);
-  set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
-  set_gpio_output(GPIOB, 12, 1);
+  // //power on ibooster. needs to power on AFTER sending CAN to prevent ibst state from being 4
+  // set_gpio_mode(GPIOB, 12, MODE_OUTPUT);
+  // set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
+  // set_gpio_output(GPIOB, 12, 1);
 
-  //Brake switch relay
-  set_gpio_mode(GPIOB, 13, MODE_OUTPUT);
-  set_gpio_output_type(GPIOB, 13, OUTPUT_TYPE_PUSH_PULL);
+  // 12V_OUT for brake lights
+  set_gpio_mode(GPIOA, 1, MODE_OUTPUT);
+  set_gpio_output_type(GPIOA, 1, OUTPUT_TYPE_PUSH_PULL);
+  set_gpio_output(GPIOA, 1, 0);
+
+  // //Brake switch relay
+  // set_gpio_mode(GPIOB, 13, MODE_OUTPUT);
+  // set_gpio_output_type(GPIOB, 13, OUTPUT_TYPE_PUSH_PULL);
 
   watchdog_init();
 

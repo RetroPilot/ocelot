@@ -737,6 +737,59 @@ class Panda(object):
     print(f"Data (hex): {dat.hex()}")
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
+  def flash_config_write_RELAY(self, index, label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp, cfg_extra, cfg_type):
+    cfg_extra = bytes(10)
+    cfg_type = 5 #CFG_TYPE_RELAY
+
+    relay_labels = {
+      "TURN_L_FRONT": 0,
+      "DRL_L": 1,
+      "HEAD_L": 2,
+      "BRIGHT_L": 3,
+      "FOG_L_FRONT": 4,
+      "TURN_R_FRONT": 5,
+      "DRL_R": 6,
+      "HEAD_R": 7,
+      "BRIGHT_R": 8,
+      "FOG_R_FRONT": 9,
+      "TURN_L_REAR": 10,
+      "BRAKE_L": 11,
+      "FOG_L_REAR": 12,
+      "REVERSE_L": 13,
+      "SIDE_L": 14,
+      "TURN_R_REAR": 15,
+      "BRAKE_R": 16,
+      "FOG_R_REAR": 17,
+      "REVERSE_R": 18,
+      "SIDE_R": 19,
+      "BRAKE_CENTER": 20,
+      "SP_1": 21,
+      "SP_2": 22,
+      "SP_3": 23,
+      "SP_4": 24,
+      "SP_5": 25,
+      "SP_6": 26,
+      "SP_7": 27,
+      "SP_8": 28,
+      "SP_9": 29,
+      "SP_10": 30,
+      "SP_11": 31,
+    }
+
+    type = 1 << relay_labels[label.upper()] if label.upper() in relay_labels else 0
+
+    dat = struct.pack("<II5B10sB",
+                      type,
+                      can_cmp,
+                      gpio_en,
+                      gpio_in,
+                      can_addr,
+                      sig_len,
+                      shift_amt,
+                      cfg_extra,
+                      cfg_type)
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
+
   def flash_config_read(self):
     MAX_CONFIG_ENTRIES = 32
     ENTRY_SIZE = 24
@@ -815,6 +868,20 @@ class Panda(object):
           "cfg_type": "VSS",
           "vss_ppd": vss_ppd,
           "is_kmh": is_kmh,
+          "extra": extra,
+        })
+      elif cfg_type == 5:  # RELAY
+        type_val, can_cmp_val, gpio_en, gpio_in, can_addr, sig_len, shift_amt, extra, cfg_type = struct.unpack_from("<II5B10sB", raw, offset)
+        entries.append({
+          "index": i,
+          "cfg_type": "RELAY",
+          "label": type_val,
+          "can_cmp_val": can_cmp_val,
+          "gpio_en": gpio_en,
+          "gpio_in": gpio_in,
+          "can_addr": can_addr,
+          "sig_len": sig_len,
+          "shift_amt": shift_amt,
           "extra": extra,
         })
 

@@ -71,7 +71,7 @@ bool brake_pressed = 0;
 
 uint32_t steer_angle_rate = 0;
 uint32_t steer_angle = 0;
-uint32_t engine_rpm_can = 0;
+uint32_t eng_rpm = 0;
 bool brake_pressed_can = 0;
 
 // can be read from CAN or ADC, depending on flash configuration
@@ -510,9 +510,9 @@ void CAN3_RX0_IRQ_Handler(void) {
       ignition_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
     }
 
-    cfg = signal_configs[6]; // ENGINE_RPM_CAN
+    cfg = signal_configs[6]; // eng_rpm
     if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
-      engine_rpm_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
+      eng_rpm = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
     }
 
     cfg = signal_configs[7]; // BRAKE_PRESSED
@@ -594,8 +594,8 @@ void TIM3_IRQ_Handler(void) {
       uint8_t dat[8];
       
       dat[7] = ((state & 0xFU) << 4) | pkt_idx2;
-      dat[6] = 0;
-      dat[5] = 0;
+      dat[6] = (eng_rpm >> 8) & 0xFF;
+      dat[5] = (eng_rpm >> 0) & 0xFF;
       dat[4] = ((brake_pressed | brake_pressed_can) & 1) << 1 | ((ignition_line | ignition_can) & 1);
       dat[3] = (cps_pulse_count >> 0) & 0xFF;
       dat[2] = (cps_dt_us >> 8) & 0xFF;
@@ -638,7 +638,6 @@ void TIM3_IRQ_Handler(void) {
     }
 
     case 3: { // CRUISE
-      // TODO: implement this from the ADC readouts
       uint8_t dat[8];
       dat[7] = ((state & 0xFU) << 4) | pkt_idx4;
       dat[6] = (adc[1] >> 8) & 0xFF;
@@ -711,7 +710,7 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
   }
   // VSS and CPS timeout checks
   const uint32_t VSS_TIMEOUT_US = 900000;
-  const uint32_t CPS_TIMEOUT_US = 900000;
+  const uint32_t CPS_TIMEOUT_US = 10000;
   uint32_t now = TIM2->CNT;
   if ((now - vss_last_us) > VSS_TIMEOUT_US) {
     vss_dt_us = 0;
@@ -815,18 +814,52 @@ void EXTI9_5_IRQ_Handler(void) {
 }
 
 // vss kph helper function
-
-uint32_t compute_vss_kph(uint32_t pulse_width_us, uint32_t vss_ppm) {
+uint32_t last_vss = 0;
+uint32_t compute_vss_kph(uint32_t pulse_width_us, uint32_t vss_ppm, uint8_t vss_type) {
     if (pulse_width_us == 0) {
-        return 0.0f;
+        return 0;
     }
 
     float pulse_width_s = (float)pulse_width_us / 1000000.0f;
     float frequency_hz = 1.0f / pulse_width_s;
-    float speed_kph = ((frequency_hz * 3600) / vss_ppm) * 160.9;
+    float speed_kph = ((frequency_hz * 3600) / vss_ppm) * 100; //* 160.9;
 
+    if (!(vss_type & 1U)){
+      speed_kph = speed_kph * 1.6;
+    }
+
+    if (last_vss > 0) {
+      if (vss > last_vss * 2 || vss < last_vss / 2) {
+        return last_vss;
+      }
+    }
+
+    last_vss = (uint32_t)speed_kph;
     return (uint32_t)speed_kph;
 }
+
+// TODO: handle the skipped tooth
+uint32_t last_rpm = 0;
+uint32_t compute_eng_rpm(uint32_t pulse_width_us, uint32_t rel_cnt, uint8_t type) {
+    if (pulse_width_us == 0 || rel_cnt == 0) {
+        return 0; 
+    }
+
+    uint32_t rpm = 60000000UL / (pulse_width_us * rel_cnt);
+
+    UNUSED(type);
+
+    if (last_rpm > 0) {
+      if (rpm > last_rpm + 200 || rpm < last_rpm - 200) {
+        return last_rpm;
+      }
+    }
+
+    last_rpm = rpm;
+    return rpm;
+
+}
+
 
 // ***************************** main code *****************************
 
@@ -857,15 +890,18 @@ void loop(void) {
   const flash_config_t *cfg = NULL;
   cfg = signal_configs[4];
   if (cfg && cfg->cfg_type == CFG_TYPE_VSS) {
-    vss = compute_vss_kph(vss_dt_us, 4000); // TODO: param config for PPM
+    vss = compute_vss_kph(vss_dt_us, (uint32_t) cfg->vss.vss_ppd, (uint8_t) cfg->vss.is_km);
   }
+
+  // TEST eng RPM equasion
+  eng_rpm = compute_eng_rpm(cps_dt_us, 6, 0);
 
   watchdog_feed();
 }
 
 int main(void) {
 
-  // ############## FLASH HANDLING #####################
+  // ######################## FLASH HANDLING ###########################
   config_block_t current_cfg_in_ram;
   memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
 
@@ -878,7 +914,6 @@ int main(void) {
   } else {
     init_config_pointers(&current_cfg_in_ram);
   }
-
   // ###################################################################
 
   // Init interrupt table

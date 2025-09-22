@@ -11,7 +11,7 @@
 #define CFG_TYPE_CAN  2
 #define CFG_TYPE_ADC  3
 #define CFG_TYPE_VSS  4
-#define GFG_TYPE_GPIO 5
+#define GFG_TYPE_RELAY 5
 
 #include <stdint.h>
 #include <stddef.h>
@@ -57,11 +57,16 @@ typedef struct __attribute__((packed, aligned(1))) {
       uint8_t extra[20];
     } vss;
 
-    // struct __attribute__((packed)) {
-    //   uint8_t gpio_in;
-    //   uint8_t gpio_out;
-    //   uint8_t extra[21];
-    // } gpio;
+    struct __attribute__((packed)) {
+      uint32_t type;
+      uint32_t can_cmp_val;
+      uint8_t gpio_en;
+      uint8_t gpio_in;
+      uint8_t can_addr;
+      uint8_t sig_len;
+      uint8_t shift_amt;
+      uint8_t extra[10];
+    } relay;
 
   };
   uint8_t cfg_type;
@@ -252,7 +257,7 @@ bool validate_flash_config(const config_block_t *cfg) {
 
   for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
     const flash_config_t *e = &cfg->entries[i];
-    if (e->cfg_type > CFG_TYPE_VSS) {
+    if (e->cfg_type > GFG_TYPE_RELAY) {
       puts("Invalid config: unknown cfg_type at index ");
       puth(i);
       puts("\n");
