@@ -737,7 +737,7 @@ class Panda(object):
     print(f"Data (hex): {dat.hex()}")
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
-  def flash_config_write_RELAY(self, index, label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp, cfg_extra, cfg_type):
+  def flash_config_write_RELAY(self, index, label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp):
     cfg_extra = bytes(10)
     cfg_type = 5 #CFG_TYPE_RELAY
 

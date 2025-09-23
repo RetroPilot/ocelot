@@ -46,6 +46,11 @@ static const uint16_t string_product_desc[] = {
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
 
+#define USB_CTRL_TIMEOUT 50
+uint32_t ctrl_timeout = 0;
+uint32_t ctrl_in = 0;
+bool usb_ctrl_active = false;
+
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
 void __initialize_hardware_early(void) {
   early();
@@ -54,6 +59,34 @@ void __attribute__ ((noinline)) enable_fpu(void) {
   // enable the FPU
   SCB->CPACR |= ((3UL << (10U * 2U)) | (3UL << (11U * 2U)));
 }
+
+uint8_t gpio_state= 0;
+
+void set_relays(uint8_t relays){
+  uint8_t relay_buf = ~relays;
+  set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U); 
+  set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);
+  set_gpio_output(GPIOA,  6, (relay_buf >> 2U) & 1U);
+  set_gpio_output(GPIOA,  7, (relay_buf >> 3U) & 1U);
+  set_gpio_output(GPIOB,  0, (relay_buf >> 4U) & 1U);
+  set_gpio_output(GPIOB,  1, (relay_buf >> 5U) & 1U);
+  set_gpio_output(GPIOB, 10, (relay_buf >> 6U) & 1U);
+  set_gpio_output(GPIOB, 12, (relay_buf >> 7U) & 1U);
+}
+
+uint8_t get_inputs(void){
+  uint8_t input_buf = 0;
+  input_buf |= get_gpio_input(GPIOC, 2) << 0U;
+  input_buf |= get_gpio_input(GPIOC, 3) << 1U;
+  input_buf |= get_gpio_input(GPIOC, 4) << 2U;
+  input_buf |= get_gpio_input(GPIOC, 5) << 3U;
+  input_buf |= get_gpio_input(GPIOC, 6) << 4U;
+  input_buf |= get_gpio_input(GPIOC, 7) << 5U;
+  input_buf |= get_gpio_input(GPIOC, 8) << 6U;
+  input_buf |= get_gpio_input(GPIOC, 9) << 7U;
+  return ~input_buf;
+}
+
 // ********************* serial debugging *********************
 
 void debug_ring_callback(uart_ring *ring) {
@@ -113,6 +146,20 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         ++resp_len;
       }
       break;
+    case 0xFC: {
+      puts("0xFC received\n");
+      ctrl_timeout = 0;
+      usb_ctrl_active = (setup->b.wValue.w >> 8) & 1U;
+      uint8_t relay_mask = setup->b.wValue.w & 0xFF;
+
+      if (usb_ctrl_active){ 
+        puts("relay control req\n");
+        set_relays(relay_mask);
+      }
+      
+      resp[0] = gpio_state;
+      break;
+    }
     case 0xFD: {
       flash_unlock();
       flash_config_format();
@@ -138,6 +185,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
     case 0xFF: {  // Chunked config read
       uint16_t offset = setup->b.wValue.w;
       uint16_t length = setup->b.wLength.w;
+      puts("USB Flash Read requested 0xFF/n");
 
       // Make sure we're not reading past the end of the config block
       const uint8_t *flash_bytes = (const uint8_t *)CONFIG_FLASH_ADDR;
@@ -203,33 +251,7 @@ uint8_t state = FAULT_STARTUP;
 const uint8_t crc_poly = 0x1D;  // standard crc8
 uint8_t crc8_lut_1d[256];
 
-uint8_t gpio_state= 0;
 uint32_t relay_ctrl_can = 0;
-
-void set_relays(uint8_t relays){
-  uint8_t relay_buf = ~relays;
-  set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U); 
-  set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);
-  set_gpio_output(GPIOA,  6, (relay_buf >> 2U) & 1U);
-  set_gpio_output(GPIOA,  7, (relay_buf >> 3U) & 1U);
-  set_gpio_output(GPIOB,  0, (relay_buf >> 4U) & 1U);
-  set_gpio_output(GPIOB,  1, (relay_buf >> 5U) & 1U);
-  set_gpio_output(GPIOB, 10, (relay_buf >> 6U) & 1U);
-  set_gpio_output(GPIOB, 12, (relay_buf >> 7U) & 1U);
-}
-
-uint8_t get_inputs(void){
-  uint8_t input_buf = 0;
-  input_buf |= get_gpio_input(GPIOC, 2) << 0U;
-  input_buf |= get_gpio_input(GPIOC, 3) << 1U;
-  input_buf |= get_gpio_input(GPIOC, 4) << 2U;
-  input_buf |= get_gpio_input(GPIOC, 5) << 3U;
-  input_buf |= get_gpio_input(GPIOC, 6) << 4U;
-  input_buf |= get_gpio_input(GPIOC, 7) << 5U;
-  input_buf |= get_gpio_input(GPIOC, 8) << 6U;
-  input_buf |= get_gpio_input(GPIOC, 9) << 7U;
-  return ~input_buf;
-}
 
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN->RF0R & CAN_RF0R_FMP0) != 0) {
@@ -327,6 +349,15 @@ void TIM3_IRQ_Handler(void) {
   }
   timeout &= 0xFFU; // keep it in bounds
 
+  if (usb_ctrl_active){
+    ctrl_timeout++;
+    if (ctrl_timeout > USB_CTRL_TIMEOUT){
+      usb_ctrl_active = false;
+      ctrl_timeout = 0;
+      set_relays(0);
+    }
+  }
+
   const flash_config_t *cfg = signal_configs[0];
   if (cfg && (cfg->sys.debug_lvl & 1)){
     puts("STATE: ");
@@ -336,6 +367,10 @@ void TIM3_IRQ_Handler(void) {
     puts(" CAN: ");
     puth(relay_ctrl_can);
     puts("\n");
+  }
+
+  if (usb_ctrl_active){
+    puts("USB CONTROL ACTIVE\n");
   }
 
 }
@@ -370,7 +405,9 @@ void loop(void) {
     }
   }
 
-  set_relays(relay_ctrl);
+  if (!usb_ctrl_active){
+    set_relays(relay_ctrl);
+  }
 
   watchdog_feed();
 }

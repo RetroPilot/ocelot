@@ -38,7 +38,14 @@ actuator_core_config_list = [
 
 relay_core_config_list = [
   (0, "System Config",            ["SYS"]),
-  (1, "Relay Config",             ["RELAY"]),
+  (1, "Relay 1 Config",           ["RELAY"]),
+  (2, "Relay 2 Config",           ["RELAY"]),
+  (3, "Relay 3 Config",           ["RELAY"]),
+  (4, "Relay 4 Config",           ["RELAY"]),
+  (5, "Relay 5 Config",           ["RELAY"]),
+  (6, "Relay 6 Config",           ["RELAY"]),
+  (7, "Relay 7 Config",           ["RELAY"]),
+  (8, "Relay 8 Config",           ["RELAY"]),
 ]
 
 relay_core_config_tags = [
@@ -204,14 +211,17 @@ if __name__ == "__main__":
             break
         print(f"{RED}Invalid input. Please enter a valid number from the list.")
 
-      print(f"Valid types for this config: {valid_types}")
-      config_type = None
-      while True:
-        ln = input(f"Enter the type to configure ({'/'.join(valid_types)}): ").strip().upper()
-        if ln in valid_types:
-          config_type = ln
-          break
-        print(f"{RED}Invalid config type. Choose one of: {', '.join(valid_types)}")
+      if len(valid_types) == 1:
+        config_type = valid_types[0]
+      else:
+        print(f"Valid types for this config: {valid_types}")
+        config_type = None
+        while True:
+          ln = input(f"Enter the type to configure ({'/'.join(valid_types)}): ").strip().upper()
+          if ln in valid_types:
+            config_type = ln
+            break
+          print(f"{RED}Invalid config type. Choose one of: {', '.join(valid_types)}")
 
       if config_type == "CAN":
         print("Enter CAN config values:")
@@ -256,13 +266,13 @@ if __name__ == "__main__":
         print(f"{GREEN}VSS config written.")
 
       elif config_type == "RELAY":
-        relay_num = int(input("Select relay number (1-8): ").strip())
-        print("Available relay labels:")
+        print("Enter Relay config values:")
+
         for idx, label in enumerate(relay_core_config_tags):
           print(f"{idx}: {label}")
-        
+
         while True:
-          ln = input("Enter the number of the relay label to select: ").strip()
+          ln = input("Enter the number of the label to apply: ").strip()
           if ln.isdigit():
             i = int(ln)
             if 0 <= i < len(relay_core_config_tags):
@@ -278,8 +288,9 @@ if __name__ == "__main__":
         shift_amt = int(input("shift_amt: ").strip())
         can_cmp = int(input("can_cmp_val: ").strip(), 0)
         
-        panda.flash_config_write_RELAY(relay_num, selected_label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp, bytes(10), 5)
+        panda.flash_config_write_RELAY(flash_index, selected_label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp)
         print(f"{GREEN}RELAY config written.")
+
     except Exception as e:
       import traceback
       print(f"{RED}Error during operation: {e}")
