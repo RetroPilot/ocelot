@@ -10,7 +10,7 @@
 #define CFG_TYPE_SYS  1
 #define CFG_TYPE_CAN  2
 #define CFG_TYPE_ADC  3
-#define CFG_TYPE_VSS  4
+#define CFG_TYPE_HALL  4
 #define GFG_TYPE_RELAY 5
 
 #include <stdint.h>
@@ -54,8 +54,10 @@ typedef struct __attribute__((packed, aligned(1))) {
     struct __attribute__((packed)) {
       uint16_t vss_ppd;
       uint8_t is_km;
-      uint8_t extra[20];
-    } vss;
+      uint8_t rel_cnt;
+      uint8_t skipped_teeth;
+      uint8_t extra[18];
+    } hall;
 
     struct __attribute__((packed)) {
       uint32_t type;
@@ -303,6 +305,8 @@ void init_config_pointers(const config_block_t *cfg) {
 
     puts("Configured signal type ");
     puth(e->cfg_type);
+    puts(" at index: ");
+    puth(i);
     puts("\n");
   }
 }
@@ -327,4 +331,10 @@ static inline int32_t extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOM
   int32_t val = (int32_t)raw_val;
   val = val * cfg->can.scale_mult + cfg->can.scale_offs;
   return val;
+}
+
+void putb(uint32_t i) {
+  for (int pos = 31; pos >= 0; pos--) {
+    putch(((i >> pos) & 1U) ? '1' : '0');
+  }
 }

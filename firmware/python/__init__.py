@@ -724,13 +724,15 @@ class Panda(object):
                       cfg_type)
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
-  def flash_config_write_VSS(self, index, vss_ppd, is_kmh):
-    cfg_extra = bytes(20) 
+  def flash_config_write_HALL(self, index, vss_ppd, is_kmh, rel_cnt, skipped_tooth):
+    cfg_extra = bytes(18) 
     cfg_type = 4  # CFG_TYPE_VSS
 
-    dat = struct.pack("<HB20sB",
+    dat = struct.pack("<HBBB18sB",
                       vss_ppd,
                       is_kmh,
+                      rel_cnt,
+                      skipped_tooth,
                       cfg_extra,
                       cfg_type)
     print(f"Data length: {len(dat)}")
@@ -862,12 +864,14 @@ class Panda(object):
         })
 
       elif cfg_type == 4:
-        vss_ppd, is_kmh, extra, cfg_type = struct.unpack_from("<HB20sB", raw, offset)
+        vss_ppd, is_kmh, rel_cnt, skipped_tooth, extra, cfg_type = struct.unpack_from("<HBBB18sB", raw, offset)
         entries.append({ 
           "index": i,
-          "cfg_type": "VSS",
+          "cfg_type": "HALL",
           "vss_ppd": vss_ppd,
           "is_kmh": is_kmh,
+          "rel_cnt": rel_cnt,
+          "skipped_tooth": skipped_tooth,
           "extra": extra,
         })
       elif cfg_type == 5:  # RELAY

@@ -4,6 +4,16 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+certifi = "==2025.1.31"
+charset-normalizer = "==3.4.1"
+hexdump = "==3.3"
+idna = "==3.10"
+libusb1 = "==3.2.0"
+pycryptodome = "==3.21.0"
+requests = "==2.32.3"
+scons = "==4.8.1"
+tqdm = "==4.67.1"
+urllib3 = "==2.2.3"
 
 [dev-packages]
 

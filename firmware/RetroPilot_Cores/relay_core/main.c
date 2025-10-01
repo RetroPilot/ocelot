@@ -61,6 +61,7 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 }
 
 uint8_t gpio_state= 0;
+uint8_t relay_ctrl = 0;
 
 void set_relays(uint8_t relays){
   uint8_t relay_buf = ~relays;
@@ -152,12 +153,8 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
       usb_ctrl_active = (setup->b.wValue.w >> 8) & 1U;
       uint8_t relay_mask = setup->b.wValue.w & 0xFF;
 
-      if (usb_ctrl_active){ 
-        puts("relay control req\n");
-        set_relays(relay_mask);
-      }
-      
-      resp[0] = gpio_state;
+      relay_ctrl = relay_mask;
+
       break;
     }
     case 0xFD: {
@@ -315,6 +312,54 @@ void CAN1_SCE_IRQ_Handler(void) {
 
 unsigned int pkt_idx = 0;
 
+void TIM1_BRK_TIM9_IRQ_Handler(void) {
+  gpio_state = get_inputs();
+
+  if (state != NO_FAULT) {
+    relay_ctrl_can = 0;
+  }
+
+  if (!usb_ctrl_active){
+    // check relay configs and set relays
+    for (int i = 1; i < 9; i++) {
+      const flash_config_t *cfg = signal_configs[i];
+      if (!cfg || cfg->cfg_type != GFG_TYPE_RELAY) continue;
+
+      // GPIO
+      if (cfg->relay.gpio_en & 1U) {
+        if ((gpio_state & cfg->relay.gpio_in) == cfg->relay.gpio_in){
+          relay_ctrl |= (1U << (i-1));
+        }
+      }
+
+      // CAN_CTRL_RP
+      if (cfg->relay.type & 1U){
+        if (relay_ctrl_can == cfg->relay.type){
+          relay_ctrl |= (1U << (i-1));
+        }
+      }
+    }
+  }
+
+  // for webusb status readback
+  if (usb_ctrl_active){
+    disable_interrupts();
+    puts("webusb_ctrl { \n");
+    puts("  \"GPIO\": ");
+    putb(gpio_state);
+    puts("\n");
+    puts("  \"RELAY_CTRL\": ");
+    putb(relay_ctrl);
+    puts("\n} \n");
+    enable_interrupts();
+  }
+  
+  set_relays(relay_ctrl);
+  relay_ctrl = 0;
+
+  TIM9->SR = 0;
+}
+
 void TIM3_IRQ_Handler(void) {
 
   // check timer for sending the IO state and clearing the CAN
@@ -354,61 +399,24 @@ void TIM3_IRQ_Handler(void) {
     if (ctrl_timeout > USB_CTRL_TIMEOUT){
       usb_ctrl_active = false;
       ctrl_timeout = 0;
-      set_relays(0);
     }
   }
 
-  const flash_config_t *cfg = signal_configs[0];
-  if (cfg && (cfg->sys.debug_lvl & 1)){
-    puts("STATE: ");
-    puth(state);
-    puts(" GPIO: ");
-    puth(gpio_state);
-    puts(" CAN: ");
-    puth(relay_ctrl_can);
-    puts("\n");
-  }
-
-  if (usb_ctrl_active){
-    puts("USB CONTROL ACTIVE\n");
-  }
+  // const flash_config_t *cfg = signal_configs[0];
+  // if (cfg && (cfg->sys.debug_lvl & 1)){
+  //   puts("STATE: ");
+  //   puth(state);
+  //   puts(" GPIO: ");
+  //   puth(gpio_state);
+  //   puts(" CAN: ");
+  //   puth(relay_ctrl_can);
+  //   puts("\n");
+  // }
 
 }
 
 // ***************************** main code *****************************
 void loop(void) {
-  gpio_state = get_inputs();
-
-  if (state != NO_FAULT) {
-    relay_ctrl_can = 0;
-  }
-
-  uint8_t relay_ctrl = 0;
-
-  // check relay configs and set relays
-  for (int i = 1; i < 9; i++) {
-    const flash_config_t *cfg = signal_configs[i];
-    if (!cfg || cfg->cfg_type != GFG_TYPE_RELAY) continue;
-
-    // GPIO
-    if (cfg->relay.gpio_en & 1U) {
-      if (gpio_state == cfg->relay.gpio_in){
-        relay_ctrl |= (1U << (i-1));
-      }
-    }
-
-    // CAN_CTRL_RP
-    if (cfg->relay.type & 1U){
-      if (relay_ctrl_can == cfg->relay.type){
-        relay_ctrl |= (1U << (i-1));
-      }
-    }
-  }
-
-  if (!usb_ctrl_active){
-    set_relays(relay_ctrl);
-  }
-
   watchdog_feed();
 }
 
@@ -438,6 +446,9 @@ int main(void) {
 
   // Should run at around 732Hz (see init below)
   REGISTER_INTERRUPT(TIM3_IRQn, TIM3_IRQ_Handler, 1000U, FAULT_INTERRUPT_RATE_TIM3)
+
+  // 8Hz timer
+  REGISTER_INTERRUPT(TIM1_BRK_TIM9_IRQn, TIM1_BRK_TIM9_IRQ_Handler, 10U, FAULT_INTERRUPT_RATE_TIM9)
 
   disable_interrupts();
 
@@ -469,6 +480,10 @@ int main(void) {
   // 48mhz / 65536 ~= 732
   timer_init(TIM3, 15);
   NVIC_EnableIRQ(TIM3_IRQn);
+
+  // 8Hz timer
+  timer_init(TIM9, 183);
+  NVIC_EnableIRQ(TIM1_BRK_TIM9_IRQn);
 
   // setup GPIO inputs
   set_gpio_mode(GPIOC, 2, MODE_INPUT);

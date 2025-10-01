@@ -13,17 +13,15 @@ CHIMERA_PANDA_PIDS = [0xddcc, 0xddee]  # Panda + Chimera variants
 
 SUPPORTED_PRODUCTS = ["Chimera", "Actuator Core", "Relay Core"]
 
-#TODO: handle and format unformatted flash
-
 # Unified configuration list (index, label, supported types)
 chimera_config_list = [
   (0,  "System Config",           ["SYS"]),
   (1,  "Steer Angle Major",       ["CAN"]),
   (2,  "Steer Angle Minor",       ["CAN"]),
   (3,  "Steer Angle Rate",        ["CAN"]),
-  (4,  "Vehicle Speed",           ["CAN", "VSS"]),
+  (4,  "Vehicle Speed",           ["CAN", "HALL"]),
   (5,  "Ignition",                ["CAN"]),
-  (6,  "Engine RPM",              ["CAN"]),
+  (6,  "Engine RPM",              ["CAN", "HALL"]),
   (7,  "Brake Pressed",           ["CAN"]),
   (11, "Cruise Button Cancel",    ["CAN", "ADC"]),
   (12, "Cruise Button Set/Down",  ["CAN", "ADC"]),
@@ -123,8 +121,8 @@ def print_config_entries(entries):
     elif cfg_type == "SYSTEM":
       # print(f"[{idx}] SYSTEM: debug_lvl={e['debug_lvl']}, can_out={e['can_out_en']}, iwdg_en={e['iwdg_en']}")
       print("SYS_PARAMS: ", e)
-    elif cfg_type == "VSS":
-      print("VSS: ", e)
+    elif cfg_type == "HALL":
+      print("HALL: ", e)
     elif cfg_type == "RELAY":
       label = get_relay_label_from_type(e['label'])
       print(f"[{idx}] RELAY: {label}, can_cmp={e['can_cmp_val']}, gpio_en={e['gpio_en']}, gpio_in={e['gpio_in']}, can_addr=0x{e['can_addr']:X}, sig_len={e['sig_len']}, shift={e['shift_amt']}")
@@ -178,24 +176,37 @@ if __name__ == "__main__":
     print(f"Attempting to connect to device with serial: {device_serial}")
     try:
       panda = Panda(serial=device_serial)
-      print(f"{GREEN}Connected. Reading existing flash config:")
+      print(f"{GREEN}Connected successfully.")
+      
+      print(f"{GREEN}What would you like to do?")
+      print("0: Format flash (erase all configurations)")
+      print("1: Configure device")
+      
+      while True:
+        action = input("Enter your choice (0 or 1): ").strip()
+        if action in ["0", "1"]:
+          break
+        print(f"{RED}Invalid choice. Please enter 0 or 1.")
+      
+      if action == "0":
+        print(f"{GREEN}Formatting flash...")
+        panda.flash_wipe_config()
+        print("FLASH FORMATTED")
+        panda.reset()
+        continue
+      
+      # action == "1" - configure device
+      print(f"{GREEN}Reading existing flash config:")
       try:
         flash_entries = panda.flash_config_read()
         print_config_entries(flash_entries)
       except Exception as e:
         print(f"{RED}Failed to read flash config: {e}")
         if str(e) == "Invalid config magic":
-          print(f"{GREEN}Would you like to format this device?")
-          ln = input("Y/N").strip()
-          if ln == ("Y"):
-            panda.flash_wipe_config()
-            print("FLASH WIPED")
-            panda.reset()
-            continue
-          if ln == ("N"):
-            break
+          print(f"{RED}Flash is not formatted. Please format first (option 0).")
+          continue
 
-      print("\nAvailable configuration options:")
+      print(f"{GREEN}\nAvailable configuration options:")
 
       for idx, (flash_idx, label, types) in enumerate(active_config_list):
         print(f"{idx}: {label} (Flash Index {flash_idx}) - Types: {', '.join(types)}")
@@ -258,12 +269,14 @@ if __name__ == "__main__":
         panda.flash_config_write_SYS(debug_lvl, can_out_en, iwdg_en)
         print(f"{GREEN}SYS config written.")
       
-      elif config_type == "VSS":
-        print("Enter VSS config values:")
+      elif config_type == "HALL":
+        print("Enter HALL config values:")
         vss_ppd = int(input("VSS PPM or PPK: ".strip()))
         is_kph = int(input("Metric? 1=YES, 0=NO ".strip()))
-        panda.flash_config_write_VSS(flash_index, vss_ppd, is_kph)
-        print(f"{GREEN}VSS config written.")
+        rel_cnt = int(input("Reluctor tooth count: ".strip()))
+        skipped_tooth = int(input("Skipped tooth count: ".strip()))
+        panda.flash_config_write_HALL(flash_index, vss_ppd, is_kph, rel_cnt, skipped_tooth)
+        print(f"{GREEN}HALL config written.")
 
       elif config_type == "RELAY":
         print("Enter Relay config values:")
@@ -281,12 +294,12 @@ if __name__ == "__main__":
               break
           print(f"{RED}Invalid input. Please enter a valid number from the list.")
         
-        gpio_en = int(input("gpio_en (0 or 1): ").strip())
-        gpio_in = int(input("gpio_in: ").strip())
-        can_addr = int(input("can_addr (hex, e.g. 0x123). A value of 0 disables CAN input: ").strip(), 0)
-        sig_len = int(input("sig_len: ").strip())
-        shift_amt = int(input("shift_amt: ").strip())
-        can_cmp = int(input("can_cmp_val: ").strip(), 0)
+        gpio_en = int(input("gpio_en (0 or 1) [0]: ").strip() or "0")
+        gpio_in = int(input("gpio_bitmask [0]: ").strip() or "0")
+        can_addr = int(input("can_addr (hex, e.g. 0x123). A value of 0 disables CAN input [0]: ").strip() or "0")
+        sig_len = int(input("sig_len [0]: ").strip() or "0")
+        shift_amt = int(input("shift_amt [0]: ").strip() or "0")
+        can_cmp = int(input("can_cmp_val [0]: ").strip() or "0")
         
         panda.flash_config_write_RELAY(flash_index, selected_label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp)
         print(f"{GREEN}RELAY config written.")

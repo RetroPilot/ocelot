@@ -74,6 +74,13 @@ uint32_t steer_angle = 0;
 uint32_t eng_rpm = 0;
 bool brake_pressed_can = 0;
 
+uint32_t last_rpm = 0;
+static uint32_t last_revolution_time = 0;
+static uint32_t last_pulse_time = 0;
+static uint8_t cached_rel_cnt = 0;
+static uint32_t last_pulse_count = 0; 
+uint16_t crank_angle = 0; 
+
 // can be read from CAN or ADC, depending on flash configuration
 bool buttons[4];
 
@@ -777,6 +784,9 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     puts(" vss_pulse: ");
     puth(vss_dt_us);
     puts("\n");
+    puts("engine rpm: ");
+    puth(eng_rpm);
+    puts("\n");
   }
 
   // for (int i=0; i<4; i++){
@@ -805,7 +815,14 @@ void EXTI9_5_IRQ_Handler(void) {
   if (EXTI->PR & EXTI_PR_PR5) {
     EXTI->PR = EXTI_PR_PR5;
 
-    cps_pulse_count = (cps_pulse_count + 1) & 0xFFF;
+    cps_pulse_count = (cps_pulse_count + 1);
+    
+    // Clip to cached reluctor count for fast interrupt handling
+    if (cached_rel_cnt > 0) {
+      cps_pulse_count %= cached_rel_cnt;
+    } else {
+      cps_pulse_count &= 0xFFF; // fallback to 12-bit counter
+    }
 
     uint32_t now = TIM2->CNT;
     cps_dt_us = (uint16_t)(now - cps_last_us);  // truncation is okay
@@ -838,26 +855,74 @@ uint32_t compute_vss_kph(uint32_t pulse_width_us, uint32_t vss_ppm, uint8_t vss_
     return (uint32_t)speed_kph;
 }
 
-// TODO: handle the skipped tooth
-uint32_t last_rpm = 0;
-uint32_t compute_eng_rpm(uint32_t pulse_width_us, uint32_t rel_cnt, uint8_t type) {
-    if (pulse_width_us == 0 || rel_cnt == 0) {
+uint32_t compute_eng_rpm(uint32_t current_time_us, uint32_t pulse_count, uint32_t pulse_width_us, uint8_t rel_cnt, uint8_t skipped_teeth) {
+    if (rel_cnt == 0) {
         return 0; 
     }
 
-    uint32_t rpm = 60000000UL / (pulse_width_us * rel_cnt);
-
-    UNUSED(type);
-
-    if (last_rpm > 0) {
-      if (rpm > last_rpm + 200 || rpm < last_rpm - 200) {
-        return last_rpm;
-      }
+    uint32_t rpm = 0;
+    uint32_t teeth_per_rev = rel_cnt - skipped_teeth;
+    bool revolution_complete = false;
+    
+    // Detect revolution completion
+    if (skipped_teeth > 0) {
+        // Gap detection method - pulse width > 1.5x previous pulse
+        if (pulse_width_us > (last_pulse_time + (last_pulse_time >> 1)) && last_pulse_time > 0) {
+            revolution_complete = true;
+            crank_angle = 0; // Reset at TDC
+        }
+        last_pulse_time = pulse_width_us;
+        crank_angle = (pulse_count * 360) / teeth_per_rev;
+    } else {
+        // Pulse count wrap method - detect when count wraps from max back to 0
+        revolution_complete = (pulse_count < last_pulse_count);
+        crank_angle = 0;
+    }
+    
+    last_pulse_count = pulse_count;
+    
+    // Calculate RPM on revolution completion
+    if (revolution_complete && last_revolution_time > 0) {
+        uint32_t revolution_time = current_time_us - last_revolution_time;
+        
+        // Handle timer rollover (happens every ~4294 seconds)
+        if (current_time_us < last_revolution_time) {
+            revolution_time = (0xFFFFFFFF - last_revolution_time) + current_time_us;
+        }
+        
+        // Sanity check - revolution time should be reasonable (10ms to 10s)
+        if (revolution_time > 10000 && revolution_time < 10000000) {
+            rpm = 60000000UL / revolution_time;
+        }
+    }
+    
+    // Update revolution timestamp
+    if (revolution_complete) {
+        last_revolution_time = current_time_us;
+    }
+    
+    // Debug output for troubleshooting
+    static uint32_t debug_counter = 0;
+    if (++debug_counter % 1000 == 0) { // Print every 1000 calls
+        puts("RPM Debug: pc="); puth(pulse_count);
+        puts(" lpc="); puth(last_pulse_count);
+        puts(" rc="); puth(revolution_complete);
+        puts(" lrt="); puth(last_revolution_time);
+        puts(" rpm="); puth(rpm);
+        puts("\n");
     }
 
-    last_rpm = rpm;
-    return rpm;
+    // Simple filtering
+    if (rpm > 0 && last_rpm > 0) {
+        if (rpm > last_rpm + 200 || rpm < last_rpm - 200) {
+            return last_rpm;
+        }
+    }
 
+    if (rpm > 0) {
+        last_rpm = rpm;
+    }
+    return rpm;
 }
 
 
@@ -889,12 +954,17 @@ void loop(void) {
 
   const flash_config_t *cfg = NULL;
   cfg = signal_configs[4];
-  if (cfg && cfg->cfg_type == CFG_TYPE_VSS) {
-    vss = compute_vss_kph(vss_dt_us, (uint32_t) cfg->vss.vss_ppd, (uint8_t) cfg->vss.is_km);
+  if (cfg && cfg->cfg_type == CFG_TYPE_HALL) {    
+    vss = compute_vss_kph(vss_dt_us, (uint32_t) cfg->hall.vss_ppd, (uint8_t) cfg->hall.is_km);
   }
 
-  // TEST eng RPM equasion
-  eng_rpm = compute_eng_rpm(cps_dt_us, 6, 0);
+  cfg = signal_configs[6];
+  if (cfg && cfg->cfg_type == CFG_TYPE_HALL) {
+    // Cache reluctor count for fast interrupt access
+    cached_rel_cnt = cfg->hall.rel_cnt;
+    eng_rpm = compute_eng_rpm(TIM2->CNT, cps_pulse_count, cps_dt_us, (uint8_t) cfg->hall.rel_cnt, (uint8_t) cfg->hall.skipped_teeth);
+
+  }
 
   watchdog_feed();
 }
