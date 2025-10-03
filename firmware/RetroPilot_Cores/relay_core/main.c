@@ -135,6 +135,33 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   last_usb_data_ptr = usbdata; // Save the pointer to the buffer
 
   switch (setup->b.bRequest) {
+    // **** 0xd1: enter bootloader mode
+    case 0xd1:
+      switch (setup->b.wValue.w) {
+        case 0:
+          // only allow bootloader entry on debug builds
+          #ifdef ALLOW_DEBUG
+            if (hardwired) {
+              puts("-> entering bootloader\n");
+              enter_bootloader_mode = ENTER_BOOTLOADER_MAGIC;
+              NVIC_SystemReset();
+            }
+          #endif
+          break;
+        case 1:
+          puts("-> entering softloader\n");
+          enter_bootloader_mode = ENTER_SOFTLOADER_MAGIC;
+          NVIC_SystemReset();
+          break;
+        default:
+          puts("Bootloader mode invalid\n");
+          break;
+      }
+      break;
+    // **** 0xd8: reset ST
+    case 0xd8:
+      NVIC_SystemReset();
+      break;
     // **** 0xe0: uart read
     case 0xe0:
       ur = get_ring_by_number(setup->b.wValue.w);

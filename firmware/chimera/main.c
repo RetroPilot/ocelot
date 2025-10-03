@@ -517,7 +517,7 @@ void CAN3_RX0_IRQ_Handler(void) {
       ignition_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
     }
 
-    cfg = signal_configs[6]; // eng_rpm
+    cfg = signal_configs[6]; // ENG_RPM
     if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
       eng_rpm = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
     }
