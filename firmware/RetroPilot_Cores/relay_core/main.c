@@ -62,6 +62,8 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 
 uint8_t gpio_state= 0;
 uint8_t relay_ctrl = 0;
+static char json_buffer[256];
+static uint16_t json_len = 0;
 
 void set_relays(uint8_t relays){
   uint8_t relay_buf = ~relays;
@@ -174,14 +176,41 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         ++resp_len;
       }
       break;
+    case 0xFB: {
+      uint16_t offset = setup->b.wValue.w;
+      uint16_t length = setup->b.wLength.w;
+      
+      if (offset == 0) {
+        json_var_t response_vars[] = {
+          {"gpio_state", gpio_state, JSON_FMT_DEC, 0, 0},
+          {"relay_ctrl", relay_ctrl, JSON_FMT_DEC, 0, 0},
+          {"usb_active", usb_ctrl_active, JSON_FMT_DEC, 0, 0}
+        };
+        json_len = json_output("relay_status", response_vars, 3, json_buffer, sizeof(json_buffer));
+      }
+      
+      uint16_t max_len = MIN(length, MAX_RESP_LEN);
+      if (offset < json_len) {
+        uint16_t remaining = json_len - offset;
+        uint16_t copy_len = MIN(remaining, max_len);
+        memcpy(resp, json_buffer + offset, copy_len);
+        resp_len = copy_len;
+      }
+      break;
+    }
     case 0xFC: {
-      puts("0xFC received\n");
       ctrl_timeout = 0;
-      usb_ctrl_active = (setup->b.wValue.w >> 8) & 1U;
-      uint8_t relay_mask = setup->b.wValue.w & 0xFF;
-
-      relay_ctrl = relay_mask;
-
+      usb_ctrl_active = true;
+      
+      if (setup->b.wLength.w > 0) {
+        json_key_map_t relay_key_map[] = {
+          {"ctrl_in", &ctrl_in, 0, 255}
+        };
+        
+        if (json_parse_input((char*)usbdata, setup->b.wLength.w, relay_key_map, 1) == JSON_PARSE_OK) {
+          relay_ctrl = ctrl_in;
+        }
+      }
       break;
     }
     case 0xFD: {
@@ -339,6 +368,8 @@ void CAN1_SCE_IRQ_Handler(void) {
 
 unsigned int pkt_idx = 0;
 
+uint16_t tick = 0;
+
 void TIM1_BRK_TIM9_IRQ_Handler(void) {
   gpio_state = get_inputs();
 
@@ -367,20 +398,15 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
       }
     }
   }
-
-  // for webusb status readback
-  if (usb_ctrl_active){
-    json_var_t status_vars[] = {
-      {"gpio_state", gpio_state, JSON_FMT_BIN, false},
-      {"relay_ctrl", relay_ctrl, JSON_FMT_BIN, false},
-      {"state", state, JSON_FMT_DEC, false},
-      {"timeout", timeout, JSON_FMT_DEC, false}
-    };
-    json_output("relay_status", status_vars, sizeof(status_vars)/sizeof(status_vars[0]));
-  }
   
   set_relays(relay_ctrl);
   relay_ctrl = 0;
+
+  puts("tick: ");
+  puth(tick);
+  puts("\n");
+  tick++;
+  tick &= 0xFFFF;
 
   TIM9->SR = 0;
 }

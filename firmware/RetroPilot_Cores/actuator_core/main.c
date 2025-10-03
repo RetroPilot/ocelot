@@ -201,20 +201,48 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         }
         break;
       }
-    case 0xFC: {
-      puts("0xFC received\n");
-      ctrl_timeout = 0;
-      usb_ctrl_active = (setup->b.wValue.w >> 8) & 1U;
-      uint16_t actuator_cmd = setup->b.wValue.w & 0xFFFF;
+    case 0xFB: {
+      uint16_t offset = setup->b.wValue.w;
+      uint16_t length = setup->b.wLength.w;
       
-      if (usb_ctrl_active) {
-        gas_set = actuator_cmd;
-        enabled = 1;
-      } else {
-        gas_set = 0;
-        enabled = 0;
+      static char json_buffer[256];
+      static uint16_t json_len = 0;
+      
+      if (offset == 0) {
+        json_var_t response_vars[] = {
+          {"gas_set", gas_set, JSON_FMT_DEC, 0, 0},
+          {"enabled", enabled, JSON_FMT_DEC, 0, 0},
+          {"adc0", adc[0], JSON_FMT_DEC, 0, 0},
+          {"adc1", adc[1], JSON_FMT_DEC, 0, 0},
+          {"state", state, JSON_FMT_DEC, 0, 0}
+        };
+        json_len = json_output("actuator_status", response_vars, 5, json_buffer, sizeof(json_buffer));
       }
       
+      uint16_t max_len = MIN(length, MAX_RESP_LEN);
+      if (offset < json_len) {
+        uint16_t remaining = json_len - offset;
+        uint16_t copy_len = MIN(remaining, max_len);
+        memcpy(resp, json_buffer + offset, copy_len);
+        resp_len = copy_len;
+      }
+      break;
+    }
+    case 0xFC: {
+      ctrl_timeout = 0;
+      usb_ctrl_active = true;
+      
+      if (setup->b.wLength.w > 0) {
+        uint32_t ctrl_val = 0;
+        json_key_map_t actuator_key_map[] = {
+          {"ctrl_in", &ctrl_val, 0, 2000}
+        };
+        
+        if (json_parse_input((char*)usbdata, setup->b.wLength.w, actuator_key_map, 1) == JSON_PARSE_OK) {
+          gas_set = ctrl_val;
+          enabled = (gas_set > 0) ? 1 : 0;
+        }
+      }
       break;
     }
     case 0xFD: {
@@ -457,12 +485,12 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     // cfg = signal_configs[0];
     if (usb_ctrl_active){
       json_var_t status_vars[] = {
-        {"adc0", adc[0], JSON_FMT_DEC, false},
-        {"adc1", adc[1], JSON_FMT_DEC, false},
-        {"state", state, JSON_FMT_DEC, false},
-        {"timeout", timeout, JSON_FMT_DEC, false},
+        {"adc0", adc[0], JSON_FMT_DEC, 0, 0},
+        {"adc1", adc[1], JSON_FMT_DEC, 0, 0},
+        {"state", state, JSON_FMT_DEC, 0, 0},
+        {"timeout", timeout, JSON_FMT_DEC, 0, 0},
       };
-      json_output("actuator_status", status_vars, sizeof(status_vars)/sizeof(status_vars[0]));
+      json_output("actuator_status", status_vars, sizeof(status_vars)/sizeof(status_vars[0]), NULL, 0);
     }
   }
   TIM9->SR = 0;

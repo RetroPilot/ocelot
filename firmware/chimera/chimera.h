@@ -364,53 +364,223 @@ void putd(uint32_t value, bool is_signed) {
 }
 
 typedef enum {
-    JSON_FMT_DEC,    // decimal (uses putd)
-    JSON_FMT_HEX,    // hexadecimal 8-digit (uses puth)
-    JSON_FMT_HEX2,   // hexadecimal 2-digit (uses puth2)
-    JSON_FMT_BIN     // binary (uses putb)
+    JSON_FMT_DEC,
+    JSON_FMT_HEX,
+    JSON_FMT_HEX2,
+    JSON_FMT_BIN
 } json_format_t;
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     const char* name;
     uint32_t value;
-    json_format_t format;
-    bool is_signed;  // only used for JSON_FMT_DEC
+    uint8_t format : 2;
+    uint8_t is_signed : 1;
+    uint8_t reserved : 5;
 } json_var_t;
 
-void json_output(const char* title, json_var_t* vars, uint8_t count) {
-  puts("{\"title\":\"");
-  puts(title);
-  puts("\",\"vars\":{");
+static const char hex_chars[] = "0123456789abcdef";
+static const char* const type_strings[] = {"dec", "hex", "hex2", "bin"};
+
+static inline uint8_t str_len(const char* s) {
+  const char* p = s;
+  while (*p) p++;
+  return p - s;
+}
+
+static inline uint16_t add_string(char* buf, uint16_t pos, const char* str, uint16_t max_len) {
+  while (*str && pos < max_len - 1) {
+    buf[pos++] = *str++;
+  }
+  return pos;
+}
+
+static inline uint16_t add_number(char* buf, uint16_t pos, uint32_t val, bool is_signed, uint16_t max_len) {
+  if (is_signed && (int32_t)val < 0) {
+    if (pos < max_len - 1) buf[pos++] = '-';
+    val = (uint32_t)(-(int32_t)val);
+  }
+  
+  if (val == 0) {
+    if (pos < max_len - 1) buf[pos++] = '0';
+    return pos;
+  }
+  
+  if (val < 10) {
+    if (pos < max_len - 1) buf[pos++] = '0' + val;
+    return pos;
+  }
+  
+  char digits[10];
+  uint8_t count = 0;
+  
+  while (val >= 100) {
+    uint32_t q = val / 100;
+    uint32_t r = val - q * 100;
+    digits[count++] = '0' + (r % 10);
+    digits[count++] = '0' + (r / 10);
+    val = q;
+  }
+  
+  while (val > 0) {
+    digits[count++] = '0' + (val % 10);
+    val /= 10;
+  }
+  
+  for (int8_t i = count - 1; i >= 0 && pos < max_len - 1; i--) {
+    buf[pos++] = digits[i];
+  }
+  
+  return pos;
+}
+
+static inline uint16_t add_hex(char* buf, uint16_t pos, uint32_t val, int bits, uint16_t max_len) {
+  pos = add_string(buf, pos, "\"0x", max_len);
+  for (int shift = bits - 4; shift >= 0 && pos < max_len - 1; shift -= 4) {
+    buf[pos++] = hex_chars[(val >> shift) & 0xF];
+  }
+  return pos;
+}
+
+static inline uint16_t add_binary(char* buf, uint16_t pos, uint32_t val, uint16_t max_len) {
+  if (pos < max_len - 1) buf[pos++] = '"';
+  
+  for (int bit = 31; bit >= 0 && pos < max_len - 1; bit--) {
+    buf[pos++] = (val & (1U << bit)) ? '1' : '0';
+  }
+  
+  return pos;
+}
+
+uint16_t json_output(const char* title, json_var_t* vars, uint8_t count, char* buffer, uint16_t max_len) {
+  uint16_t pos = 0;
+  
+  // Build JSON structure
+  pos = add_string(buffer, pos, "{\"title\":\"", max_len);
+  pos = add_string(buffer, pos, title, max_len);
+  pos = add_string(buffer, pos, "\",\"vars\":{", max_len);
   
   for (uint8_t i = 0; i < count; i++) {
-    puts("\"");
-    puts(vars[i].name);
-    puts("\":{\"value\":");
+    pos = add_string(buffer, pos, "\"", max_len);
+    pos = add_string(buffer, pos, vars[i].name, max_len);
+    pos = add_string(buffer, pos, "\":{\"value\":", max_len);
     
     switch (vars[i].format) {
       case JSON_FMT_DEC:
-        putd(vars[i].value, vars[i].is_signed);
-        puts(",\"type\":\"dec\"}");
+        pos = add_number(buffer, pos, vars[i].value, vars[i].is_signed, max_len);
         break;
       case JSON_FMT_HEX:
-        puts("\"0x");
-        puth(vars[i].value);
-        puts("\",\"type\":\"hex\"}");
+        pos = add_hex(buffer, pos, vars[i].value, 32, max_len);
         break;
       case JSON_FMT_HEX2:
-        puts("\"0x");
-        puth2(vars[i].value);
-        puts("\",\"type\":\"hex2\"}");
+        pos = add_hex(buffer, pos, vars[i].value, 8, max_len);
         break;
       case JSON_FMT_BIN:
-        puts("\"");
-        putb(vars[i].value);
-        puts("\",\"type\":\"bin\"}");
+        pos = add_binary(buffer, pos, vars[i].value, max_len);
         break;
     }
     
-    if (i < count - 1) puts(",");
+    if (vars[i].format != JSON_FMT_DEC) {
+      if (pos < max_len - 1) buffer[pos++] = '"';
+    }
+    
+    pos = add_string(buffer, pos, ",\"type\":\"", max_len);
+    pos = add_string(buffer, pos, type_strings[vars[i].format], max_len);
+    pos = add_string(buffer, pos, "\"}", max_len);
+    
+    if (i < count - 1) {
+      pos = add_string(buffer, pos, ",", max_len);
+    }
   }
   
-  puts("}}\n");
+  pos = add_string(buffer, pos, "}}", max_len);
+  
+  if (pos < max_len) buffer[pos] = '\0';
+  return pos;
+}
+
+typedef enum {
+    JSON_PARSE_OK = 0,
+    JSON_PARSE_INVALID_FORMAT,
+    JSON_PARSE_KEY_NOT_FOUND,
+    JSON_PARSE_VALUE_INVALID
+} json_parse_result_t;
+
+typedef struct {
+    const char* key;
+    uint32_t* target_var;
+    uint32_t min_val;
+    uint32_t max_val;
+} json_key_map_t;
+
+static inline bool str_match(const char* a, const char* b, uint8_t len) {
+  while (len >= 4) {
+    if (*(uint32_t*)a != *(uint32_t*)b) return false;
+    a += 4; b += 4; len -= 4;
+  }
+  while (len--) {
+    if (*a++ != *b++) return false;
+  }
+  return true;
+}
+
+json_parse_result_t json_parse_input(const char* json_str, uint16_t len, 
+                                     json_key_map_t* key_map, uint8_t map_size) {
+  const char* pos = json_str;
+  const char* end = json_str + len;
+  uint8_t found_keys = 0;
+  
+  uint8_t key_lens[8]; // Assume max 8 keys
+  for (uint8_t i = 0; i < map_size && i < 8; i++) {
+    key_lens[i] = str_len(key_map[i].key);
+  }
+  
+  while (pos < end && found_keys < map_size) {
+    if (*pos == '"') {
+      pos++; // skip opening quote
+      const char* key_start = pos;
+      
+      while (pos < end && *pos != '"') pos++;
+      if (pos >= end) return JSON_PARSE_INVALID_FORMAT;
+      
+      uint8_t key_len = pos - key_start;
+      pos++;
+      
+      // Check against all keys in one pass
+      for (uint8_t i = 0; i < map_size; i++) {
+        if (key_len == key_lens[i] && 
+            str_match(key_start, key_map[i].key, key_len)) {
+          
+          while (pos < end && *pos != ':') pos++;
+          if (pos >= end) return JSON_PARSE_INVALID_FORMAT;
+          pos++;
+          
+          while (pos < end && (*pos == ' ' || *pos == '\t')) pos++;
+          
+          uint32_t value = 0;
+          const char* num_start = pos;
+          while (pos < end && *pos >= '0' && *pos <= '9') {
+            uint32_t new_val = value * 10 + (*pos - '0');
+            if (new_val < value) return JSON_PARSE_VALUE_INVALID; // overflow
+            value = new_val;
+            pos++;
+          }
+          
+          if (pos == num_start) return JSON_PARSE_INVALID_FORMAT; // no digits
+          
+          // Validate range
+          if (value >= key_map[i].min_val && value <= key_map[i].max_val) {
+            *(key_map[i].target_var) = value;
+            found_keys++;
+          } else {
+            return JSON_PARSE_VALUE_INVALID;
+          }
+          break;
+        }
+      }
+    } else {
+      pos++;
+    }
+  }
+  
+  return JSON_PARSE_OK;
 }
