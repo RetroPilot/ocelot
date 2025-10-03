@@ -52,6 +52,10 @@ static const uint16_t string_product_desc[] = {
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
 
+#define USB_CTRL_TIMEOUT 50
+uint32_t ctrl_timeout = 0;
+bool usb_ctrl_active = false;
+
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
 void __initialize_hardware_early(void) {
   early();
@@ -197,6 +201,22 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         }
         break;
       }
+    case 0xFC: {
+      puts("0xFC received\n");
+      ctrl_timeout = 0;
+      usb_ctrl_active = (setup->b.wValue.w >> 8) & 1U;
+      uint16_t actuator_cmd = setup->b.wValue.w & 0xFFFF;
+      
+      if (usb_ctrl_active) {
+        gas_set = actuator_cmd;
+        enabled = 1;
+      } else {
+        gas_set = 0;
+        enabled = 0;
+      }
+      
+      break;
+    }
     case 0xFD: {
       flash_unlock();
       flash_config_format();
@@ -421,19 +441,28 @@ void TIM3_IRQ_Handler(void) {
       timeout += 1U;
     }
   }
+
+  if (usb_ctrl_active){
+    ctrl_timeout++;
+    if (ctrl_timeout > USB_CTRL_TIMEOUT){
+      usb_ctrl_active = false;
+      ctrl_timeout = 0;
+    }
+  }
 }
 
 void TIM1_BRK_TIM9_IRQ_Handler(void) {
   if (TIM9->SR != 0) {
-    const flash_config_t *cfg = NULL;
-    cfg = signal_configs[0];
-    if (cfg && (cfg->sys.debug_lvl & 1)){
-      puth(TIM3->CNT);
-      puts("\n ADC0: ");
-      puth(adc[0]);
-      puts("\n ADC1: ");
-      puth(adc[1]);
-      puts("\n");
+    // const flash_config_t *cfg = NULL;
+    // cfg = signal_configs[0];
+    if (usb_ctrl_active){
+      json_var_t status_vars[] = {
+        {"adc0", adc[0], JSON_FMT_DEC, false},
+        {"adc1", adc[1], JSON_FMT_DEC, false},
+        {"state", state, JSON_FMT_DEC, false},
+        {"timeout", timeout, JSON_FMT_DEC, false},
+      };
+      json_output("actuator_status", status_vars, sizeof(status_vars)/sizeof(status_vars[0]));
     }
   }
   TIM9->SR = 0;

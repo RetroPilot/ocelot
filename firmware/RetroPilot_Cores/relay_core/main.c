@@ -370,15 +370,13 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
 
   // for webusb status readback
   if (usb_ctrl_active){
-    disable_interrupts();
-    puts("webusb_ctrl { \n");
-    puts("  \"GPIO\": ");
-    putb(gpio_state);
-    puts("\n");
-    puts("  \"RELAY_CTRL\": ");
-    putb(relay_ctrl);
-    puts("\n} \n");
-    enable_interrupts();
+    json_var_t status_vars[] = {
+      {"gpio_state", gpio_state, JSON_FMT_BIN, false},
+      {"relay_ctrl", relay_ctrl, JSON_FMT_BIN, false},
+      {"state", state, JSON_FMT_DEC, false},
+      {"timeout", timeout, JSON_FMT_DEC, false}
+    };
+    json_output("relay_status", status_vars, sizeof(status_vars)/sizeof(status_vars[0]));
   }
   
   set_relays(relay_ctrl);

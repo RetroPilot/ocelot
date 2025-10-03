@@ -338,3 +338,79 @@ void putb(uint32_t i) {
     putch(((i >> pos) & 1U) ? '1' : '0');
   }
 }
+
+void putd(uint32_t value, bool is_signed) {
+  if (is_signed && (int32_t)value < 0) {
+    putch('-');
+    value = (uint32_t)(-(int32_t)value);
+  }
+  
+  if (value == 0) {
+    putch('0');
+    return;
+  }
+  
+  char digits[10];
+  uint8_t count = 0;
+  
+  while (value > 0) {
+    digits[count++] = '0' + (value % 10);
+    value /= 10;
+  }
+  
+  for (int8_t i = count - 1; i >= 0; i--) {
+    putch(digits[i]);
+  }
+}
+
+typedef enum {
+    JSON_FMT_DEC,    // decimal (uses putd)
+    JSON_FMT_HEX,    // hexadecimal 8-digit (uses puth)
+    JSON_FMT_HEX2,   // hexadecimal 2-digit (uses puth2)
+    JSON_FMT_BIN     // binary (uses putb)
+} json_format_t;
+
+typedef struct {
+    const char* name;
+    uint32_t value;
+    json_format_t format;
+    bool is_signed;  // only used for JSON_FMT_DEC
+} json_var_t;
+
+void json_output(const char* title, json_var_t* vars, uint8_t count) {
+  puts("{\"title\":\"");
+  puts(title);
+  puts("\",\"vars\":{");
+  
+  for (uint8_t i = 0; i < count; i++) {
+    puts("\"");
+    puts(vars[i].name);
+    puts("\":{\"value\":");
+    
+    switch (vars[i].format) {
+      case JSON_FMT_DEC:
+        putd(vars[i].value, vars[i].is_signed);
+        puts(",\"type\":\"dec\"}");
+        break;
+      case JSON_FMT_HEX:
+        puts("\"0x");
+        puth(vars[i].value);
+        puts("\",\"type\":\"hex\"}");
+        break;
+      case JSON_FMT_HEX2:
+        puts("\"0x");
+        puth2(vars[i].value);
+        puts("\",\"type\":\"hex2\"}");
+        break;
+      case JSON_FMT_BIN:
+        puts("\"");
+        putb(vars[i].value);
+        puts("\",\"type\":\"bin\"}");
+        break;
+    }
+    
+    if (i < count - 1) puts(",");
+  }
+  
+  puts("}}\n");
+}
