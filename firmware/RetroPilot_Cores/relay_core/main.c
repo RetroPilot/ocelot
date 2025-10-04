@@ -42,6 +42,7 @@ static const uint16_t string_product_desc[] = {
 #include "drivers/uart.h"
 #include "chimera/usb.h"
 #include "chimera/chimera.h"
+#include "drivers/json_rpc.h"
 
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 uint32_t enter_bootloader_mode;
@@ -62,8 +63,9 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 
 uint8_t gpio_state= 0;
 uint8_t relay_ctrl = 0;
-static char json_buffer[256];
-static uint16_t json_len = 0;
+
+
+
 
 void set_relays(uint8_t relays){
   uint8_t relay_buf = ~relays;
@@ -101,6 +103,15 @@ void debug_ring_callback(uart_ring *ring) {
 
 // callback function to handle flash writes over USB
 void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
+  // Handle JSON RPC data
+  if (len_ep0 > 0 && len_ep0 < 512) {
+    // Ensure null termination
+    ((char*)usbdata_ep0)[len_ep0] = '\0';
+    
+    json_rpc_handle_request((char*)usbdata_ep0, len_ep0);
+  }
+  
+  // Handle flash config writes
   if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(flash_config_t))) {
     handle_deferred_config_write();
   }
@@ -176,43 +187,12 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         ++resp_len;
       }
       break;
-    case 0xFB: {
-      uint16_t offset = setup->b.wValue.w;
-      uint16_t length = setup->b.wLength.w;
-      
-      if (offset == 0) {
-        json_var_t response_vars[] = {
-          {"gpio_state", gpio_state, JSON_FMT_DEC, 0, 0},
-          {"relay_ctrl", relay_ctrl, JSON_FMT_DEC, 0, 0},
-          {"usb_active", usb_ctrl_active, JSON_FMT_DEC, 0, 0}
-        };
-        json_len = json_output("relay_status", response_vars, 3, json_buffer, sizeof(json_buffer));
-      }
-      
-      uint16_t max_len = MIN(length, MAX_RESP_LEN);
-      if (offset < json_len) {
-        uint16_t remaining = json_len - offset;
-        uint16_t copy_len = MIN(remaining, max_len);
-        memcpy(resp, json_buffer + offset, copy_len);
-        resp_len = copy_len;
-      }
+    case 0xFB: // JSON response output
+      resp_len = json_rpc_get_response((char*)resp, setup->b.wValue.w, MAX_RESP_LEN);
       break;
-    }
-    case 0xFC: {
-      ctrl_timeout = 0;
-      usb_ctrl_active = true;
-      
-      if (setup->b.wLength.w > 0) {
-        json_key_map_t relay_key_map[] = {
-          {"ctrl_in", &ctrl_in, 0, 255}
-        };
-        
-        if (json_parse_input((char*)usbdata, setup->b.wLength.w, relay_key_map, 1) == JSON_PARSE_OK) {
-          relay_ctrl = ctrl_in;
-        }
-      }
+    case 0xFC: // JSON command input
+      // Data will be handled in usb_cb_ep0_out callback
       break;
-    }
     case 0xFD: {
       flash_unlock();
       flash_config_format();
@@ -370,6 +350,67 @@ unsigned int pkt_idx = 0;
 
 uint16_t tick = 0;
 
+// Simplified JSON handlers
+static int json_system_info(const char* params, char* response, int max_len) {
+  (void)params;
+  char result[256];
+  json_build_system_info(result, sizeof(result), "relay_core", "\"gpio\",\"relay\"");
+  return json_build_success(response, max_len, result);
+}
+
+static int json_relay_set(const char* params, char* response, int max_len) {
+  int value = json_parse_int(params, "value");
+  if (value >= 0 && value <= 255) {
+    set_relays(value);
+    return json_build_success(response, max_len, "\"success\"");
+  }
+  return json_build_error(response, max_len, "invalid_params", "Value must be 0-255");
+}
+
+static int json_relay_get(const char* params, char* response, int max_len) {
+  (void)params;
+  char result[32];
+  char* p = result;
+  p += json_strcpy_safe(p, "{\"relays\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, relay_ctrl, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
+  return json_build_success(response, max_len, result);
+}
+
+static int json_gpio_read(const char* params, char* response, int max_len) {
+  (void)params;
+  char result[32];
+  char* p = result;
+  p += json_strcpy_safe(p, "{\"gpio\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, gpio_state, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
+  return json_build_success(response, max_len, result);
+}
+
+// Simple inline handlers for system methods
+static int json_system_methods(const char* params, char* response, int max_len) {
+  (void)params;
+  return json_build_success(response, max_len,
+    "[\"system.info\",\"system.methods\",\"system.reset\",\"relay.set\",\"relay.get\",\"gpio.read\"]");
+}
+
+static int json_system_reset(const char* params, char* response, int max_len) {
+  (void)params; (void)response; (void)max_len;
+  NVIC_SystemReset();
+  return 0;
+}
+
+// Method registry
+static const json_method_t device_methods[] = {
+  {"system.info", json_system_info},
+  {"system.methods", json_system_methods},
+  {"system.reset", json_system_reset},
+  {"relay.set", json_relay_set},
+  {"relay.get", json_relay_get},
+  {"gpio.read", json_gpio_read},
+  {NULL, NULL}
+};
+
 void TIM1_BRK_TIM9_IRQ_Handler(void) {
   gpio_state = get_inputs();
 
@@ -452,18 +493,6 @@ void TIM3_IRQ_Handler(void) {
       ctrl_timeout = 0;
     }
   }
-
-  // const flash_config_t *cfg = signal_configs[0];
-  // if (cfg && (cfg->sys.debug_lvl & 1)){
-  //   puts("STATE: ");
-  //   puth(state);
-  //   puts(" GPIO: ");
-  //   puth(gpio_state);
-  //   puts(" CAN: ");
-  //   puth(relay_ctrl_can);
-  //   puts("\n");
-  // }
-
 }
 
 // ***************************** main code *****************************
@@ -478,10 +507,6 @@ int main(void) {
   memcpy(&current_cfg_in_ram, (void *)CONFIG_FLASH_ADDR, sizeof(config_block_t));
 
   if (!validate_flash_config(&current_cfg_in_ram)) {
-    // flash_unlock();
-    // flash_config_format();
-    // flash_lock();
-    // NVIC_SystemReset();
     puts("FLASH NOT FORMATTED. PLEASE FORMAT BEFORE WRITING A CONFIG.\n");
   } else {
     init_config_pointers(&current_cfg_in_ram);
@@ -545,14 +570,6 @@ int main(void) {
   set_gpio_mode(GPIOC, 7, MODE_INPUT);
   set_gpio_mode(GPIOC, 8, MODE_INPUT);
   set_gpio_mode(GPIOC, 9, MODE_INPUT);
-  // set_gpio_pullup(GPIOC, 2, PULL_UP);
-  // set_gpio_pullup(GPIOC, 3, PULL_UP);
-  // set_gpio_pullup(GPIOC, 4, PULL_UP);
-  // set_gpio_pullup(GPIOC, 5, PULL_UP);
-  // set_gpio_pullup(GPIOC, 6, PULL_UP);
-  // set_gpio_pullup(GPIOC, 7, PULL_UP);
-  // set_gpio_pullup(GPIOC, 8, PULL_UP);
-  // set_gpio_pullup(GPIOC, 9, PULL_UP);
 
   // setup GPIO outputs
   set_gpio_mode(GPIOA, 4,  MODE_OUTPUT);
@@ -580,11 +597,11 @@ int main(void) {
   set_gpio_output_type(GPIOB, 10, OUTPUT_TYPE_PUSH_PULL);
   set_gpio_output_type(GPIOB, 12, OUTPUT_TYPE_PUSH_PULL);
 
-  // set_gpio_output(GPIOB, 0, 0);
-
-  // set_relays(1);
-
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
+
+  // Initialize JSON RPC with custom handler
+  json_rpc_init(device_methods);
+  puts("JSON RPC: relay_core ready\n");
 
   if (signal_configs[0] != NULL && (signal_configs[0]->sys.iwdg_en & 1)){
     puts("WATCHDOG ENABLED\n");
