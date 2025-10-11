@@ -68,7 +68,7 @@ on Docker (recommended)
 on Ubuntu 20.04
 ```
 ./build_project.sh <project_name>
-./recover.sh <project name>
+./flash.sh <project name>
 ```
 
 providing no arguments will list all projects available to build and flash.

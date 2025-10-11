@@ -18,18 +18,6 @@ typedef struct __attribute__((packed)) {
 // RAM buffer of current LUT
 static uint8_t torque_scale_table[TORQUE_LUT_SIZE];
 
-// CRC32
-static uint32_t crc32(const void *data, uint32_t len) {
-  const uint8_t *d = (const uint8_t *)data;
-  uint32_t crc = ~0U;
-  while (len--) {
-    crc ^= *d++;
-    for (int k = 0; k < 8; k++)
-      crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
-  }
-  return ~crc;
-}
-
 // Default LUT generator
 static void torque_lut_generate_default(void) {
   for (int i = 0; i < TORQUE_LUT_SIZE; i++) {
@@ -38,73 +26,6 @@ static void torque_lut_generate_default(void) {
     else
       torque_scale_table[i] = 50;
   }
-}
-
-void flash_unlock(void) {
-  __disable_irq();
-  if (FLASH->CR & FLASH_CR_LOCK) {
-    FLASH->KEYR = 0x45670123;
-    FLASH->KEYR = 0xCDEF89AB;
-  }
-  __enable_irq();
-}
-  
-void flash_lock(void) {
-    __disable_irq();
-  FLASH->CR |= FLASH_CR_LOCK;
-  __enable_irq();
-}
-
-void flash_erase_sector(uint8_t sector) {
-    __disable_irq();
-  while (FLASH->SR & FLASH_SR_BSY);  // wait for not busy
-  
-  FLASH->CR &= ~(FLASH_CR_SNB | FLASH_CR_PSIZE);
-  FLASH->CR |= FLASH_CR_PSIZE_1;                // 32-bit programming
-  FLASH->CR |= FLASH_CR_SER | (sector << 3);    // select sector and set SER
-  FLASH->CR |= FLASH_CR_STRT;                   // start erase
-  
-  while (FLASH->SR & FLASH_SR_BSY);  // wait until done
-  FLASH->CR &= ~FLASH_CR_SER;        // clear SER
-  
-  puts("Erased flash sector ");
-  puth(sector);
-  puts("\n");
-  __enable_irq();
-}
-
-void flash_write_word(uint32_t address, uint32_t data) {
-    __disable_irq();
-  while (FLASH->SR & FLASH_SR_BSY);  // wait
-  
-  FLASH->CR &= ~(FLASH_CR_PSIZE);
-  FLASH->CR |= FLASH_CR_PSIZE_1;     // 32-bit programming
-  FLASH->CR |= FLASH_CR_PG;
-  
-  *(volatile uint32_t *)address = data;
-  
-  while (FLASH->SR & FLASH_SR_BSY);  // wait
-  FLASH->CR &= ~FLASH_CR_PG;
-  
-  // Debug
-//   puts("Wrote flash at 0x");
-//   puth(address);
-//   puts(": 0x");
-//   puth(data);
-//   puts("\n");
-  
-  // Verify
-  uint32_t verify = *(volatile uint32_t *)address;
-  if (verify != data) {
-    puts("VERIFY FAIL at 0x");
-    puth(address);
-    puts(": wrote 0x");
-    puth(data);
-    puts(", read 0x");
-    puth(verify);
-    puts("\n");
-  }
-  __enable_irq();
 }
 
 static void torque_lut_save(void) {

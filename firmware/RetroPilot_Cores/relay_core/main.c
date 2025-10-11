@@ -63,11 +63,10 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 
 uint8_t gpio_state= 0;
 uint8_t relay_ctrl = 0;
-
-
-
+uint8_t relay_state = 0;  // Persistent relay state for JSON responses
 
 void set_relays(uint8_t relays){
+  relay_state = relays;  // Store current state
   uint8_t relay_buf = ~relays;
   set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U); 
   set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);
@@ -350,6 +349,18 @@ unsigned int pkt_idx = 0;
 
 uint16_t tick = 0;
 
+// Helper function to build bit array JSON
+static int json_build_bit_array(char* buffer, int max_len, uint8_t value) {
+  char* p = buffer;
+  p += json_strcpy_safe(p, "[", max_len - (p - buffer));
+  for (int i = 0; i < 8; i++) {
+    if (i > 0) p += json_strcpy_safe(p, ",", max_len - (p - buffer));
+    p += json_strcpy_safe(p, ((value >> i) & 1) ? "1" : "0", max_len - (p - buffer));
+  }
+  p += json_strcpy_safe(p, "]", max_len - (p - buffer));
+  return p - buffer;
+}
+
 // Simplified JSON handlers
 static int json_system_info(const char* params, char* response, int max_len) {
   (void)params;
@@ -362,27 +373,32 @@ static int json_relay_set(const char* params, char* response, int max_len) {
   int value = json_parse_int(params, "value");
   if (value >= 0 && value <= 255) {
     set_relays(value);
-    return json_build_success(response, max_len, "\"success\"");
+    char result[64];
+    char* p = result;
+    p += json_strcpy_safe(p, "{\"success\":true,\"relay_ctrl\":", sizeof(result) - (p - result));
+    p += json_build_bit_array(p, sizeof(result) - (p - result), relay_state);
+    p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
+    return json_build_success(response, max_len, result);
   }
   return json_build_error(response, max_len, "invalid_params", "Value must be 0-255");
 }
 
 static int json_relay_get(const char* params, char* response, int max_len) {
   (void)params;
-  char result[32];
+  char result[48];
   char* p = result;
   p += json_strcpy_safe(p, "{\"relays\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, relay_ctrl, sizeof(result) - (p - result));
+  p += json_build_bit_array(p, sizeof(result) - (p - result), relay_state);
   p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
   return json_build_success(response, max_len, result);
 }
 
 static int json_gpio_read(const char* params, char* response, int max_len) {
   (void)params;
-  char result[32];
+  char result[48];
   char* p = result;
   p += json_strcpy_safe(p, "{\"gpio\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, gpio_state, sizeof(result) - (p - result));
+  p += json_build_bit_array(p, sizeof(result) - (p - result), gpio_state);
   p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
   return json_build_success(response, max_len, result);
 }
@@ -441,13 +457,18 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
   }
   
   set_relays(relay_ctrl);
-  relay_ctrl = 0;
 
   puts("tick: ");
   puth(tick);
   puts("\n");
+  puts("relays: ");
+  putb(relay_ctrl);
+  puts("\n");
+
   tick++;
   tick &= 0xFFFF;
+
+  relay_ctrl = 0;
 
   TIM9->SR = 0;
 }

@@ -673,15 +673,18 @@ class Panda(object):
   def flash_wipe_config(self):
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFD, 0, 0, b'')
 
-  def flash_config_write_SYS(self, debug_lvl, can_out_en, iwdg_en):
-    cfg_extra = bytes(20)  # expanded from 13 to 20
+  def flash_config_write_SYS(self, debug_lvl, can_out_en, iwdg_en, mode=0, override_threshold=0):
+    cfg_extra = bytearray(20)
+    cfg_extra[0] = mode  # Store mode in first byte of cfg_extra
+    cfg_extra[1] = (override_threshold >> 8) & 0xFF  # High byte of override threshold
+    cfg_extra[2] = override_threshold & 0xFF         # Low byte of override threshold
     cfg_type = 1  # CFG_TYPE_SYS
 
     dat = struct.pack("<3B20sB",
                       debug_lvl,
                       can_out_en,
                       iwdg_en,
-                      cfg_extra,
+                      bytes(cfg_extra),
                       cfg_type)
     print(f"Data length: {len(dat)}")
     print(f"Data (hex): {dat.hex()}")
@@ -820,15 +823,16 @@ class Panda(object):
       cfg_type = entry_bytes[-1]  # last byte
 
       if cfg_type == 1:  # SYSTEM
-        debug_lvl, can_out_en, iwdg_en, cfg_extra, flags, cfg_type = struct.unpack_from("<3B20s7sB", raw, offset)
+        debug_lvl, can_out_en, iwdg_en, cfg_extra, cfg_type = struct.unpack_from("<3B20sB", raw, offset)
+        mode = cfg_extra[0] if len(cfg_extra) > 0 else 0
         entries.append({
           "index": i,
           "cfg_type": "SYSTEM",
           "debug_lvl": debug_lvl,
           "can_out_en": can_out_en,
           "iwdg_en": iwdg_en,
+          "mode": mode,
           "cfg_extra": cfg_extra,
-          "flags": flags,
         })
 
       elif cfg_type == 2:  # CAN

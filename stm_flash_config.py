@@ -11,7 +11,7 @@ GREEN = '\033[32m'
 CHIMERA_PANDA_VID = 0xbbaa
 CHIMERA_PANDA_PIDS = [0xddcc, 0xddee]  # Panda + Chimera variants
 
-SUPPORTED_PRODUCTS = ["Chimera", "Actuator Core", "Relay Core"]
+SUPPORTED_PRODUCTS = ["Chimera", "Actuator Core", "Relay Core", "Interceptor Core"]
 
 # Unified configuration list (index, label, supported types)
 chimera_config_list = [
@@ -44,6 +44,12 @@ relay_core_config_list = [
   (6, "Relay 6 Config",           ["RELAY"]),
   (7, "Relay 7 Config",           ["RELAY"]),
   (8, "Relay 8 Config",           ["RELAY"]),
+]
+
+interceptor_core_config_list = [
+  (0, "System Config",            ["SYS"]),
+  (1, "ADC Channel 0 Validation", ["ADC"]),
+  (2, "ADC Channel 1 Validation", ["ADC"]),
 ]
 
 relay_core_config_tags = [
@@ -119,8 +125,9 @@ def print_config_entries(entries):
     elif cfg_type == "ADC":
       print(f"[{idx}] ADC: adc1={e['adc1']}, adc2={e['adc2']}, tol={e['adc_tolerance']}, chan={e['adc_num']}, en={e['adc_en']}")
     elif cfg_type == "SYSTEM":
-      # print(f"[{idx}] SYSTEM: debug_lvl={e['debug_lvl']}, can_out={e['can_out_en']}, iwdg_en={e['iwdg_en']}")
-      print("SYS_PARAMS: ", e)
+      mode_names = {0: "Unconfigured", 1: "Differential", 2: "Gas Pedal"}
+      mode_name = mode_names.get(e.get('mode', 0), "Unknown")
+      print(f"[{idx}] SYSTEM: debug_lvl={e['debug_lvl']}, can_out={e['can_out_en']}, iwdg_en={e['iwdg_en']}, mode={e.get('mode', 0)} ({mode_name})")
     elif cfg_type == "HALL":
       print("HALL: ", e)
     elif cfg_type == "RELAY":
@@ -166,7 +173,10 @@ if __name__ == "__main__":
         print(f"{GREEN}Actuator Core device detected. Using Actuator Core config.")
     elif "RELAY CORE" in selected_product_name:
         active_config_list = relay_core_config_list
-        print(f"{GREEN}Actuator Core device detected. Using Actuator Core config.")
+        print(f"{GREEN}Relay Core device detected. Using Relay Core config.")
+    elif "INTERCEPTOR CORE" in selected_product_name:
+        active_config_list = interceptor_core_config_list
+        print(f"{GREEN}Interceptor Core device detected. Using Interceptor Core config.")
     else:
         print(f"{RED}Unknown device type. Cannot determine configuration options.")
         sys.exit(1)
@@ -252,22 +262,107 @@ if __name__ == "__main__":
         print(f"{GREEN}CAN config written.")
 
       elif config_type == "ADC":
-        print("Enter ADC config values:")
-        adc1 = int(input("adc1: ").strip())
-        adc2 = int(input("adc2: ").strip())
-        adc_tol = int(input("adc_tolerance: ").strip())
-        adc_num = int(input("adc_num (0 or 1): ").strip())
-        adc_en = int(input("adc_en (0 or 1): ").strip())
+        # Determine current mode for context-aware prompts
+        current_mode = 0  # Default to unconfigured
+        try:
+          flash_entries = panda.flash_config_read()
+          for entry in flash_entries:
+            if entry.get('index') == 0 and entry.get('cfg_type') == 'SYSTEM':
+              current_mode = entry.get('mode', 0)
+              break
+        except:
+          pass
+        
+        mode_names = {0: "Unconfigured", 1: "Differential", 2: "Gas Pedal"}
+        print(f"Current device mode: {mode_names.get(current_mode, 'Unknown')}")
+        
+        if current_mode == 1:  # Differential mode
+          print("\nDifferential Mode ADC Validation (Center Point + Tolerance):")
+          adc1_input = input("Center value (expected sensor position): ").strip()
+          adc1 = int(adc1_input) if adc1_input else 2048
+          adc2 = 0  # Unused in differential mode
+          adc_tol_input = input("Tolerance (+/- deviation allowed): ").strip()
+          adc_tol = int(adc_tol_input) if adc_tol_input else 100
+        elif current_mode == 2:  # Gas pedal mode
+          print("\nGas Pedal Mode ADC Validation (Range Limits):")
+          adc2_input = input("Minimum valid value (e.g., 200 for 0.2V): ").strip()
+          adc2 = int(adc2_input) if adc2_input else 200
+          adc1_input = input("Maximum valid value (e.g., 4000 for 4.0V): ").strip()
+          adc1 = int(adc1_input) if adc1_input else 4000
+          adc_tol = int(input("Tolerance/hysteresis (optional): ").strip() or "0")
+        else:  # Unconfigured mode
+          print("\nGeneric ADC Configuration:")
+          adc1_input = input("adc1: ").strip()
+          adc1 = int(adc1_input) if adc1_input else 0
+          adc2_input = input("adc2: ").strip()
+          adc2 = int(adc2_input) if adc2_input else 0
+          adc_tol_input = input("adc_tolerance: ").strip()
+          adc_tol = int(adc_tol_input) if adc_tol_input else 0
+        
+        adc_num = flash_index - 1   # Channel 0 at index 1, Channel 1 at index 2
+        adc_en = int(input("Enable validation (0=disabled, 1=enabled): ").strip())
+        
         panda.flash_config_write_ADC(flash_index, adc1, adc2, adc_tol, adc_num, adc_en)
-        print(f"{GREEN}ADC config written.")
+        print(f"{GREEN}ADC config written for channel {adc_num}.")
+        
+        if current_mode == 1:
+          print(f"Configured: Center={adc1}, Tolerance=±{adc_tol}")
+        elif current_mode == 2:
+          print(f"Configured: Range={adc2}-{adc1}, Tolerance={adc_tol}")
+        else:
+          print(f"Configured: adc1={adc1}, adc2={adc2}, tolerance={adc_tol}")
 
       elif config_type == "SYS":
         print("Enter SYS config values:")
         debug_lvl = int(input("debug_lvl: ".strip()))
         can_out_en = int(input("can_out_en: ".strip()))
         iwdg_en = int(input("iwdg_en (0 or 1): ".strip()))
-        panda.flash_config_write_SYS(debug_lvl, can_out_en, iwdg_en)
+        
+        # Mode selection for devices that support it
+        mode = 0
+        override_threshold = 0
+        if "INTERCEPTOR CORE" in selected_product_name:
+          print("\nMode selection:")
+          print("0: Unconfigured (safe default)")
+          print("1: Differential (torque interceptor)")
+          print("2: Gas Pedal (pedal-style)")
+          while True:
+            mode_input = input("Enter mode (0-2): ").strip()
+            if mode_input.isdigit() and 0 <= int(mode_input) <= 2:
+              mode = int(mode_input)
+              break
+            print(f"{RED}Invalid mode. Please enter 0, 1, or 2.")
+          
+          # Override threshold for differential mode
+          if mode == 1:  # Differential mode
+            print("\nDifferential Override Threshold:")
+            print("This sets when the system detects large steering input differences.")
+            print("Default: 336 (0x150). Range: 1-65535")
+            while True:
+              threshold_input = input("Enter override threshold (or press Enter for default): ").strip()
+              if threshold_input == "":
+                override_threshold = 336  # Default 0x150
+                break
+              elif threshold_input.isdigit() and 1 <= int(threshold_input) <= 65535:
+                override_threshold = int(threshold_input)
+                break
+              print(f"{RED}Invalid threshold. Please enter 1-65535 or press Enter for default.")
+        elif "ACTUATOR CORE" in selected_product_name:
+          print("\nMode selection:")
+          print("0: Unconfigured (safe default)")
+          print("1: Differential (torque interceptor)")
+          print("2: Gas Pedal (pedal-style)")
+          while True:
+            mode_input = input("Enter mode (0-2): ").strip()
+            if mode_input.isdigit() and 0 <= int(mode_input) <= 2:
+              mode = int(mode_input)
+              break
+            print(f"{RED}Invalid mode. Please enter 0, 1, or 2.")
+          
+        panda.flash_config_write_SYS(debug_lvl, can_out_en, iwdg_en, mode, override_threshold)
         print(f"{GREEN}SYS config written.")
+        if "INTERCEPTOR CORE" in selected_product_name and mode == 1:
+          print(f"Override threshold set to: {override_threshold} (0x{override_threshold:X})")
       
       elif config_type == "HALL":
         print("Enter HALL config values:")
