@@ -20,12 +20,11 @@
 #include "gpio.h"
 #include "crc.h"
 
-#include "obj/gitversion.h"
-
 #include "drivers/uart.h"
 #include "chimera/usb.h"
 #include "chimera/can.h"
 #include "chimera/chimera.h"
+#include "drivers/json_rpc.h"
 
 extern int _app_start[0xc000];
 
@@ -146,6 +145,15 @@ void debug_ring_callback(uart_ring *ring) {
 
 // callback function to handle flash writes over USB
 void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
+  // Handle JSON RPC data
+  if (len_ep0 > 0 && len_ep0 < 512) {
+    // Ensure null termination
+    ((char*)usbdata_ep0)[len_ep0] = '\0';
+    
+    json_rpc_handle_request((char*)usbdata_ep0, len_ep0);
+  }
+  
+  // Handle flash config writes
   if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(flash_config_t))) {
     handle_deferred_config_write();
   }
@@ -349,6 +357,12 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
       heartbeat_counter = 0U;
       break;
     }
+    case 0xFB: // JSON response output
+      resp_len = json_rpc_get_response((char*)resp, setup->b.wValue.w, MAX_RESP_LEN);
+      break;
+    case 0xFC: // JSON command input
+      // Data will be handled in usb_cb_ep0_out callback
+      break;
     case 0xFD: {
       flash_unlock();
       flash_config_format();
@@ -926,6 +940,67 @@ uint32_t compute_eng_rpm(uint32_t current_time_us, uint32_t pulse_count, uint32_
 }
 
 
+// ***************************** JSON RPC Methods *****************************
+
+static int json_chimera_get_values(const char* params, char* response, int max_len) {
+  (void)params;
+  char result[512];
+  char* p = result;
+  
+  p += json_strcpy_safe(p, "{", sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, "\"adc0\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, adc[0], sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"adc1\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, adc[1], sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"vss\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, vss, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"eng_rpm\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, eng_rpm, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"steer_angle\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, steer_angle, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"ignition\":", sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, (ignition_line | ignition_can) ? "true" : "false", sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"brake_pressed\":", sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, (brake_pressed | brake_pressed_can) ? "true" : "false", sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"vss_pulse_count\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, vss_pulse_count, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"cps_pulse_count\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, cps_pulse_count, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, ",\"uptime\":", sizeof(result) - (p - result));
+  p += json_int_to_str(p, uptime_cnt, sizeof(result) - (p - result));
+  p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
+  
+  return json_build_success(response, max_len, result);
+}
+
+static int json_chimera_system_info(const char* params, char* response, int max_len) {
+  (void)params;
+  char result[256];
+  json_build_system_info(result, sizeof(result), "chimera", "\"adc\",\"vss\",\"eng_rpm\",\"steering_angle\"");
+  return json_build_success(response, max_len, result);
+}
+
+static int json_chimera_system_methods(const char* params, char* response, int max_len) {
+  (void)params;
+  return json_build_success(response, max_len,
+    "[\"system.info\",\"system.methods\",\"system.reset\",\"chimera.get_values\"]");
+}
+
+static int json_chimera_system_reset(const char* params, char* response, int max_len) {
+  (void)params; (void)response; (void)max_len;
+  NVIC_SystemReset();
+  return 0;
+}
+
+// Method registry
+static const json_method_t chimera_methods[] = {
+  {"system.info", json_chimera_system_info},
+  {"system.methods", json_chimera_system_methods},
+  {"system.reset", json_chimera_system_reset},
+  {"chimera.get_values", json_chimera_get_values},
+  {NULL, NULL}
+};
+
 // ***************************** main code *****************************
 
 // This function is the main application. It is run in a while loop from main() and is interrupted by those specified in main().
@@ -1061,6 +1136,10 @@ int main(void) {
   UNUSED(ret);
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
+
+  // Initialize JSON RPC with Chimera methods
+  json_rpc_init(chimera_methods);
+  puts("JSON RPC: chimera ready\n");
 
   // ############### TIMER INTERRUPTS ###############
   // clock / (psc+1)*(arr) = TIM3_IRQ interrupt frequency

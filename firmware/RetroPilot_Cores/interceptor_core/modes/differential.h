@@ -185,7 +185,7 @@ static void differential_timer_handler(void) {
     timeout += 1U;
   }
 
-  if (timeout_vss == 700U) {
+  if (timeout_vss == 300U) {
     state = FAULT_TIMEOUT_VSS;
     vehicle_speed = 0;
     enable = 0;

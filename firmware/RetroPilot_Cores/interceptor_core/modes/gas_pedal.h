@@ -120,7 +120,7 @@ static void gas_pedal_timer_handler(void) {
   led_value = !led_value;
 
   // Timeout handling
-  if (timeout == 700) {
+  if (timeout == 300U) {
     state = FAULT_TIMEOUT;
   } else {
     timeout += 1U;
