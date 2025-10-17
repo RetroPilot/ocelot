@@ -22,9 +22,9 @@ static void gas_pedal_debug_output(bool relay_state) {
   puts(" DAC1:"); puth(dac_output_1);
   puts(" Relay:"); puth(relay_state);
   puts(" State:"); puth(state);
-  puts(" GasSet0:"); puth(gas_set_0);
-  puts(" GasSet1:"); puth(gas_set_1);
-  puts(" Enable:"); puth(enable);
+  puts(" CtrlTarget0:"); puth(ctrl_target_0);
+  puts(" CtrlTarget1:"); puth(ctrl_target_1);
+  puts(" Enable:"); puth(ctrl_enable);
   puts("\n");
 }
 
@@ -35,14 +35,14 @@ static void gas_pedal_process(void) {
 
   // Gas pedal logic: MAX of set value and ADC
   if (state == NO_FAULT) {
-    uint32_t raw_dac_0 = MAX(gas_set_0, adc_input_0);
-    uint32_t raw_dac_1 = MAX(gas_set_1, adc_input_1);
-    dac_output_0 = safe_dac_output(raw_dac_0, &last_dac_0, 0);
-    dac_output_1 = safe_dac_output(raw_dac_1, &last_dac_1, 1);
+    uint32_t raw_dac_0 = MAX(ctrl_target_0, adc_input_0);
+    uint32_t raw_dac_1 = MAX(ctrl_target_1, adc_input_1);
+    dac_output_0 = safe_dac_output(raw_dac_0, &safety_last_dac_0, 0);
+    dac_output_1 = safe_dac_output(raw_dac_1, &safety_last_dac_1, 1);
   } else {
     // In fault state, use safe center values
-    dac_output_0 = safe_dac_output(DAC_SAFE_CENTER, &last_dac_0, 0);
-    dac_output_1 = safe_dac_output(DAC_SAFE_CENTER, &last_dac_1, 1);
+    dac_output_0 = safe_dac_output(DAC_SAFE_CENTER, &safety_last_dac_0, 0);
+    dac_output_1 = safe_dac_output(DAC_SAFE_CENTER, &safety_last_dac_1, 1);
   }
   
   dac_set(0, dac_output_0);
@@ -71,23 +71,23 @@ static void gas_pedal_can_rx_handler(int address, uint8_t *dat) {
     uint8_t index = dat[5] & 0xFU;
     
     if (dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
-      if (((current_index + 1U) & 0xFU) == index) {
-        enable = enable_bit;  // Set global enable variable
-        if (enable) {
-          gas_set_0 = value_0;
-          gas_set_1 = value_1;
+      if (((timeout_counter + 1U) & 0xFU) == index) {
+        ctrl_enable = enable_bit;  // Set global enable variable
+        if (ctrl_enable) {
+          ctrl_target_0 = value_0;
+          ctrl_target_1 = value_1;
         } else {
           if ((value_0 == 0U) && (value_1 == 0U)) {
             state = NO_FAULT;
           } else {
             state = FAULT_INVALID_CKSUM;
           }
-          gas_set_0 = 0;
-          gas_set_1 = 0;
+          ctrl_target_0 = 0;
+          ctrl_target_1 = 0;
         }
-        timeout = 0;
+        timeout_can = 0;
       }
-      current_index = index;
+      timeout_counter = index;
     } else {
       state = FAULT_BAD_CHECKSUM;
     }
@@ -120,9 +120,9 @@ static void gas_pedal_timer_handler(void) {
   led_value = !led_value;
 
   // Timeout handling
-  if (timeout == 300U) {
+  if (timeout_can == 300U) {
     state = FAULT_TIMEOUT;
   } else {
-    timeout += 1U;
+    timeout_can += 1U;
   }
 }

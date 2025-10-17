@@ -22,16 +22,21 @@ static void default_debug_output(bool relay_state) {
 }
 
 static void default_process(void) {
-  // Pass-through: DAC = ADC (with safety limits)
   adc_input_0 = adc_get(12);
   adc_input_1 = adc_get(13);
   
-  dac_output_0 = safe_dac_output(adc_input_0, &last_dac_0, 0);
-  dac_output_1 = safe_dac_output(adc_input_1, &last_dac_1, 1);
-  dac_set(0, dac_output_0);
-  dac_set(1, dac_output_1);
-  
-  // Relay controlled by universal state check
+  if (!usb_ctrl_active) {
+    dac_output_0 = safe_dac_output(adc_input_0, &safety_last_dac_0, 0);
+    dac_output_1 = safe_dac_output(adc_input_1, &safety_last_dac_1, 1);
+    dac_set(0, dac_output_0);
+    dac_set(1, dac_output_1);
+  } else {
+    // When USB control is active, apply safety limits and set DAC
+    uint32_t safe_dac0 = safe_dac_output(dac_output_0, &safety_last_dac_0, 0);
+    uint32_t safe_dac1 = safe_dac_output(dac_output_1, &safety_last_dac_1, 1);
+    dac_set(0, safe_dac0);
+    dac_set(1, safe_dac1);
+  }
   
   watchdog_feed();
 }

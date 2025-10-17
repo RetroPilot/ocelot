@@ -100,9 +100,11 @@ static inline int json_parse_int(const char* json, const char* key) {
     pos++;
   }
   
-  while (json[pos] >= '0' && json[pos] <= '9') {
+  int digit_count = 0;
+  while (json[pos] >= '0' && json[pos] <= '9' && digit_count < 10) {
     value = value * 10 + (json[pos] - '0');
     pos++;
+    digit_count++;
   }
   
   return negative ? -value : value;

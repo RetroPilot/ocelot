@@ -22,13 +22,13 @@ static void differential_debug_output(bool relay_state) {
   puts(" DAC1:"); puth(dac_output_1);
   puts(" Relay:"); puth(relay_state);
   puts(" State:"); puth(state);
-  puts(" Mag:"); puth(magnitude);
-  puts(" Ovr:"); puth(override);
+  puts(" Mag:"); puth(ctrl_magnitude_alt);
+  puts(" Ovr:"); puth(ctrl_override);
   puts(" TScale:"); puth(get_torque_scale_percent(vehicle_speed));
-  puts(" ReqMag:"); puth(req_mag);
-  puts(" GasSet0:"); puth(gas_set_0);
-  puts(" GasSet1:"); puth(gas_set_1);
-  puts(" Enable:"); puth(enable);
+  puts(" ReqMag:"); puth(ctrl_magnitude);
+  puts(" CtrlTarget0:"); puth(ctrl_target_0);
+  puts(" CtrlTarget1:"); puth(ctrl_target_1);
+  puts(" Enable:"); puth(ctrl_enable);
   puts("\n");
 }
 
@@ -37,7 +37,7 @@ static void differential_process(void) {
   adc_input_0 = adc_get(12);
   adc_input_1 = adc_get(13);
 
-  magnitude = ABS((int32_t) adc_input_0 - (int32_t) adc_input_1);
+  ctrl_magnitude_alt = ABS((int32_t) adc_input_0 - (int32_t) adc_input_1);
   
   // Get configurable override threshold from SYS config
   uint16_t override_threshold = 0x150; // Default fallback
@@ -47,22 +47,22 @@ static void differential_process(void) {
     if (override_threshold == 0) override_threshold = 0x150; // Use default if not set
   }
   
-  override = ABS(magnitude) > override_threshold;
+  ctrl_override = ABS(ctrl_magnitude_alt) > override_threshold;
 
-  req_mag = (gas_set_0 - gas_set_1);
+  ctrl_magnitude = (ctrl_target_0 - ctrl_target_1);
   
-  // Limit req_mag first
-  if (ABS(req_mag) > 400){
-    req_mag = 0;
+  // Limit ctrl_magnitude first
+  if (ABS(ctrl_magnitude) > 400){
+    ctrl_magnitude = 0;
   }
   
   uint16_t scale_percent = get_torque_scale_percent(vehicle_speed);
   // Ensure minimum 50% scaling for testing at low speeds
   if (scale_percent < 50) scale_percent = 50;
-  int16_t scaled_torque = (req_mag * scale_percent) / 100; 
+  int16_t scaled_torque = (ctrl_magnitude * scale_percent) / 100; 
 
   // Differential torque logic
-  if ((state == NO_FAULT) && enable) {
+  if ((state == NO_FAULT) && ctrl_enable) {
     // Get center points from flash config
     uint32_t center_0 = DAC_SAFE_CENTER; // Default fallback
     uint32_t center_1 = DAC_SAFE_CENTER; // Default fallback
@@ -110,27 +110,27 @@ static void differential_can_rx_handler(int address, uint8_t *dat) {
     // Normal packet processing
     uint16_t value_0 = (dat[2] << 8) | dat[1];
     uint16_t value_1 = (dat[4] << 8) | dat[3];
-    enable = ((dat[5] >> 7) & 1U) != 0U;
+    ctrl_enable = ((dat[5] >> 7) & 1U) != 0U;
     uint8_t index = dat[5] & 0xFU;
     
     if (dat[0] == lut_checksum(dat, 6, crc8_lut_1d)) {
-      if (((current_index + 1U) & 0xFU) == index) {
-        if (enable) {
-          gas_set_0 = value_0;
-          gas_set_1 = value_1;
+      if (((timeout_counter + 1U) & 0xFU) == index) {
+        if (ctrl_enable) {
+          ctrl_target_0 = value_0;
+          ctrl_target_1 = value_1;
         } else {
           if ((value_0 == 0U) && (value_1 == 0U)) {
             state = NO_FAULT;
           } else {
             state = FAULT_INVALID_CKSUM;
           }
-          gas_set_0 = 0;
-          gas_set_1 = 0;
-          req_mag = 0;
+          ctrl_target_0 = 0;
+          ctrl_target_1 = 0;
+          ctrl_magnitude = 0;
         }
-        timeout = 0;
+        timeout_can = 0;
       }
-      current_index = index;
+      timeout_counter = index;
     } else {
       state = FAULT_BAD_CHECKSUM;
     }
@@ -141,11 +141,11 @@ static void differential_can_rx_handler(int address, uint8_t *dat) {
     uint16_t value_1 = (dat[6] << 8) | dat[5];
     uint8_t index = dat[7] & 0xFU;
     if (dat[0] == lut_checksum(dat, 8, crc8_lut_1d)) {
-      if (((current_index_vss + 1U) & 0xFU) == index) {
+      if (((timeout_vss_counter + 1U) & 0xFU) == index) {
         vehicle_speed = value_1;
         timeout_vss = 0;
       }
-      current_index_vss = index;
+      timeout_vss_counter = index;
     }
   }
 }
@@ -158,7 +158,7 @@ static void differential_timer_handler(void) {
     dat[2] = (adc_input_0 >> 8) & 0xFFU;
     dat[3] = (adc_input_1 >> 0) & 0xFFU;
     dat[4] = (adc_input_1 >> 8) & 0xFFU;
-    dat[5] = override;
+    dat[5] = ctrl_override;
     dat[6] = 0;
     dat[7] = ((state & 0xFU) << 4) | pkt_idx;
     dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
@@ -178,17 +178,17 @@ static void differential_timer_handler(void) {
   led_value = !led_value;
 
   // Timeout handling
-  if (timeout == 700U) {
+  if (timeout_can == 700U) {
     state = FAULT_TIMEOUT;
-    enable = 0;
+    ctrl_enable = 0;
   } else {
-    timeout += 1U;
+    timeout_can += 1U;
   }
 
   if (timeout_vss == 300U) {
     state = FAULT_TIMEOUT_VSS;
     vehicle_speed = 0;
-    enable = 0;
+    ctrl_enable = 0;
   } else {
     timeout_vss += 1U;
   }

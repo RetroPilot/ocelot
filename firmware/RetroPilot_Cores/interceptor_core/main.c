@@ -44,7 +44,10 @@ static const uint16_t string_product_desc[] = {
 #include "drivers/uart.h"
 #include "chimera/usb.h"
 #include "chimera/chimera.h"
+#include "drivers/json_rpc.h"
 #include "RetroPilot_Cores/interceptor_core/torque_lut.h"
+#include "RetroPilot_Cores/interceptor_core/modes/common.h"
+#include "RetroPilot_Cores/interceptor_core/json_rpc_handlers.h"
 
 // USB data buffer (defined in usb.h but need to declare extern)
 extern uint8_t usbdata[0x100];
@@ -58,9 +61,6 @@ extern uart_ring uart_ring_debug;
 #define MODE_GAS_PEDAL    2
 
 // Mode headers
-#include "RetroPilot_Cores/interceptor_core/modes/default.h"
-#include "RetroPilot_Cores/interceptor_core/modes/differential.h"
-#include "RetroPilot_Cores/interceptor_core/modes/gas_pedal.h"// Mode headers
 #include "RetroPilot_Cores/interceptor_core/modes/default.h"
 #include "RetroPilot_Cores/interceptor_core/modes/differential.h"
 #include "RetroPilot_Cores/interceptor_core/modes/gas_pedal.h"
@@ -78,15 +78,50 @@ uint8_t current_mode = MODE_UNCONFIGURED;
 
 uint32_t enter_bootloader_mode;
 
+#define USB_CTRL_TIMEOUT 4
+uint32_t ctrl_timeout = 0;
+volatile bool usb_ctrl_active = false;
+
+static inline void set_usb_ctrl_active(bool val) {
+  __disable_irq();
+  usb_ctrl_active = val;
+  if (!val) ctrl_timeout = 0;
+  __enable_irq();
+}
+
+static inline bool get_usb_ctrl_active(void) {
+  __disable_irq();
+  bool val = usb_ctrl_active;
+  __enable_irq();
+  return val;
+}
+
 // Missing constants
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
 #define ENTER_SOFTLOADER_MAGIC 0xdeadc0de
 
-// Function declaration for missing USB callback
-void usb_cb_ep0_out(void *usbdata, int len) {
-  // Handle flash config writes
-  if ((usbdata == last_usb_data_ptr) & (len == sizeof(flash_config_t))) {
-    handle_deferred_config_write();
+void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
+  // Validate input parameters
+  if (usbdata_ep0 == NULL || len_ep0 <= 0 || len_ep0 >= 512) {
+    return;
+  }
+  
+  // Validate data content for JSON RPC (must start with '{' for JSON)
+  uint8_t *data = (uint8_t*)usbdata_ep0;
+  if (len_ep0 > 0 && len_ep0 < 512 && data[0] == '{') {
+    if (len_ep0 < 511) {
+      ((char*)usbdata_ep0)[len_ep0] = '\0';
+      if (!json_rpc_handle_request((char*)usbdata_ep0, len_ep0)) {
+        puts("JSON RPC handle request failed\n");
+      }
+    }
+  }
+  
+  // Handle flash config writes with strict validation
+  if ((usbdata_ep0 == last_usb_data_ptr) && (len_ep0 == sizeof(flash_config_t))) {
+    if (config_write_pending) {
+      handle_deferred_config_write();
+    }
   }
 }
 
@@ -133,7 +168,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 
   // Store the setup packet and data pointer for deferred processing
   memcpy(&last_setup_pkt, setup, sizeof(USB_Setup_TypeDef));
-  last_usb_data_ptr = usbdata;  // Use global USB data buffer like chimera
+  last_usb_data_ptr = usbdata;
 
   switch (setup->b.bRequest) {
     // **** 0xd1: enter bootloader mode
@@ -179,6 +214,16 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
                          getc(ur, (char*)&resp[resp_len])) {
         ++resp_len;
       }
+      break;
+    case 0xFB: // JSON response output
+      resp_len = json_rpc_get_response((char*)resp, setup->b.wValue.w, MAX_RESP_LEN);
+      if (resp_len <= 0) {
+        puts("JSON RPC get response failed\n");
+        resp_len = 0;
+      }
+      break;
+    case 0xFC: // JSON command input
+      // Data will be handled in usb_cb_ep0_out callback
       break;
     // **** 0xFD: flash config format
     case 0xFD: {
@@ -236,6 +281,31 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   return resp_len;
 }
 
+// DAC safety function implementation
+uint32_t safe_dac_output(uint32_t new_val, uint32_t *last_val, uint8_t channel) {
+  UNUSED(channel);
+  if (new_val < DAC_MIN_SAFE) new_val = DAC_MIN_SAFE;
+  if (new_val > DAC_MAX_SAFE) new_val = DAC_MAX_SAFE;
+  int32_t delta = (int32_t)new_val - (int32_t)*last_val;
+  if (delta > MAX_DAC_RATE) {
+    new_val = *last_val + MAX_DAC_RATE;
+  } else if (delta < -MAX_DAC_RATE) {
+    new_val = *last_val - MAX_DAC_RATE;
+  }
+  *last_val = new_val;
+  return new_val;
+}
+
+bool validate_dac_peripheral(void) {
+  uint32_t dac0_reg = DAC->DHR12R1;
+  uint32_t dac1_reg = DAC->DHR12R2;
+  if (dac0_reg > 4095 || dac1_reg > 4095) return false;
+  if (!(DAC->CR & DAC_CR_EN1) || !(DAC->CR & DAC_CR_EN2)) return false;
+  return true;
+}
+
+// JSON RPC handlers are now in json_rpc_handlers.h
+
 // ***************************** can port ***************************
 // addresses to be used on CAN
 
@@ -249,28 +319,47 @@ void CAN1_TX_IRQ_Handler(void) {
   CAN->TSR |= CAN_TSR_RQCP0;
 }
 
-// two independent values
-uint16_t gas_set_0 = 0;
-uint16_t gas_set_1 = 0;
-int16_t req_mag = 0;;
-
-bool enable = 0;
+// Global variable definitions for ADC/DAC values, control state, and system status
+// These variables are declared as extern in common.h for cross-module access
+uint32_t adc_input_0 = 0, adc_input_1 = 0;
+uint32_t dac_output_0 = 2048, dac_output_1 = 2048;
+uint32_t last_dac_0 = 2048, last_dac_1 = 2048;
+bool override = false;
+int32_t magnitude = 0;
+uint16_t gas_set_0 = 0, gas_set_1 = 0;
+int16_t req_mag = 0;
+bool enable = false;
 uint16_t vehicle_speed = 0;
-
-#define MAX_TIMEOUT 50U
-uint32_t timeout = 0;
-uint32_t timeout_vss = 0;
-uint32_t current_index = 0;
-uint32_t current_index_vss = 0;
-
-// Fault states are now defined in common.h
-
+uint32_t timeout = 0, timeout_vss = 0;
+uint32_t current_index = 0, current_index_vss = 0;
 uint8_t state = FAULT_STARTUP;
-
-const uint8_t crc_poly = 0x1D;  // standard crc8
+unsigned int pkt_idx = 0;
+int led_value = 0;
 uint8_t crc8_lut_1d[256];
 
+// Control variables - standardized with ctrl_ prefix
+uint32_t ctrl_target_0 = 0;
+uint32_t ctrl_target_1 = 0;
+int16_t ctrl_magnitude = 0;
+int16_t ctrl_magnitude_alt = 0;
+bool ctrl_override = false;
+bool ctrl_enable = false;
+uint32_t safety_last_dac_0 = 2048;
+uint32_t safety_last_dac_1 = 2048;
+
+#define MAX_TIMEOUT 50U
+uint32_t timeout_can = 0;
+uint32_t timeout_counter = 0;
+uint32_t timeout_vss_counter = 0;
+
+const uint8_t crc_poly = 0x1D;  // standard crc8
+
+// Configure interceptor mode and assign function pointers
 void setup_mode(uint8_t mode) {
+  if (current_mode == MODE_UNCONFIGURED && mode != MODE_UNCONFIGURED) {
+    set_usb_ctrl_active(false);
+  }
+  
   current_mode = mode;
   puts("Setting interceptor mode: ");
   puth(mode);
@@ -310,14 +399,17 @@ void setup_mode(uint8_t mode) {
   }
 }
 
+// CAN1 receive interrupt handler - processes incoming CAN messages
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN->RF0R & CAN_RF0R_FMP0) != 0) {
     int address = CAN->sFIFOMailBox[0].RIR >> 21;
     uint8_t dat[8];
-    for (int i=0; i<8; i++) {
+    for (int i = 0; i < 8; i++) {
       dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
     }
-    mode_can_rx_handler_func(address, dat);
+    if (mode_can_rx_handler_func) {
+      mode_can_rx_handler_func(address, dat);
+    }
     CAN->RF0R |= CAN_RF0R_RFOM0;
   }
 }
@@ -327,80 +419,36 @@ void CAN1_SCE_IRQ_Handler(void) {
   llcan_clear_send(CAN);
 }
 
-// Universal ADC/DAC variables for all modes
-uint32_t adc_input_0 = 0;  // Primary analog input (e.g., gas pedal position)
-uint32_t adc_input_1 = 0;  // Secondary analog input (e.g., brake pedal position)
-uint32_t dac_output_0 = 0; // Primary analog output
-uint32_t dac_output_1 = 0; // Secondary analog output
 
-// Legacy aliases for compatibility
-#define pdl0 adc_input_0
-#define pdl1 adc_input_1
 
-bool override = 0;
-int32_t magnitude = 0;
-
-unsigned int pkt_idx = 0;
-
-int led_value = 0;
-
-// DAC Safety variables
-uint32_t last_dac_0 = DAC_SAFE_CENTER;
-uint32_t last_dac_1 = DAC_SAFE_CENTER;
-
-// DAC Safety functions
-uint32_t safe_dac_output(uint32_t new_val, uint32_t *last_val, uint8_t channel) {
-  UNUSED(channel); // Channel parameter for future use
-  
-  // Clamp to safe range
-  if (new_val < DAC_MIN_SAFE) new_val = DAC_MIN_SAFE;
-  if (new_val > DAC_MAX_SAFE) new_val = DAC_MAX_SAFE;
-  
-  // Rate limiting
-  int32_t delta = (int32_t)new_val - (int32_t)*last_val;
-  if (delta > MAX_DAC_RATE) {
-    new_val = *last_val + MAX_DAC_RATE;
-  } else if (delta < -MAX_DAC_RATE) {
-    new_val = *last_val - MAX_DAC_RATE;
-  }
-  
-  *last_val = new_val;
-  return new_val;
-}
-
-bool validate_dac_peripheral(void) {
-  // Check if DAC peripheral is responding
-  // Read back DAC register values to detect stuck peripheral
-  uint32_t dac0_reg = DAC->DHR12R1;
-  uint32_t dac1_reg = DAC->DHR12R2;
-  
-  // Simple sanity check - values should be in valid range
-  if (dac0_reg > 4095 || dac1_reg > 4095) {
-    return false;
-  }
-  
-  // Check if DAC is enabled
-  if (!(DAC->CR & DAC_CR_EN1) || !(DAC->CR & DAC_CR_EN2)) {
-    return false;
-  }
-  
-  return true;
-}
-
-// 8Hz Safety Timer Handler
 void TIM1_BRK_TIM9_IRQ_Handler(void) {
+  if (get_usb_ctrl_active()) {
+    ctrl_timeout++;
+    if (ctrl_timeout > USB_CTRL_TIMEOUT) {
+      set_usb_ctrl_active(false);
+      if (current_mode == MODE_UNCONFIGURED) {
+        dac_output_0 = safe_dac_output(adc_input_0, &safety_last_dac_0, 0);
+        dac_output_1 = safe_dac_output(adc_input_1, &safety_last_dac_1, 1);
+      }
+    }
+  }
+  
   // ADC validation check
-  if (!mode_validate_adc_func(adc_input_0, 0) || !mode_validate_adc_func(adc_input_1, 1)) {
-    // Check if it's unconfigured vs sensor fault
-    const flash_config_t *cfg0 = signal_configs[1];
-    const flash_config_t *cfg1 = signal_configs[2];
-    bool adc0_configured = (cfg0 && cfg0->cfg_type == CFG_TYPE_ADC && (cfg0->adc.adc_en & 1));
-    bool adc1_configured = (cfg1 && cfg1->cfg_type == CFG_TYPE_ADC && (cfg1->adc.adc_en & 1));
-    
-    if (!adc0_configured || !adc1_configured) {
-      state = FAULT_ADC_UNCONFIGURED;
-    } else {
-      state = FAULT_SENSOR;
+  if (mode_validate_adc_func) {
+    bool adc0_valid = mode_validate_adc_func(adc_input_0, 0);
+    bool adc1_valid = mode_validate_adc_func(adc_input_1, 1);
+    if (!adc0_valid || !adc1_valid) {
+      // Check if it's unconfigured vs sensor fault
+      const flash_config_t *cfg0 = signal_configs[1];
+      const flash_config_t *cfg1 = signal_configs[2];
+      bool adc0_configured = (cfg0 && cfg0->cfg_type == CFG_TYPE_ADC && (cfg0->adc.adc_en & 1));
+      bool adc1_configured = (cfg1 && cfg1->cfg_type == CFG_TYPE_ADC && (cfg1->adc.adc_en & 1));
+      
+      if (!adc0_configured || !adc1_configured) {
+        state = FAULT_ADC_UNCONFIGURED;
+      } else {
+        state = FAULT_SENSOR;
+      }
     }
   }
   
@@ -409,20 +457,25 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     state = FAULT_SENSOR; // Treat DAC peripheral fault as sensor fault
   }
 
-  // Relay turns ON when state is NO_FAULT and enable is 1 for all modes
-  // In default mode, relay is always OFF
-  bool relay_on = (current_mode != MODE_UNCONFIGURED) && (state == NO_FAULT) && enable;
+  // Relay control logic
+  bool mode_allows_relay = (current_mode != MODE_UNCONFIGURED) || usb_ctrl_active;
+  bool system_ready = (state == NO_FAULT) && ctrl_enable;
+  bool relay_on = mode_allows_relay && system_ready;
   set_gpio_output(GPIOB, 0, !relay_on);  // Invert for active-low relay
 
   #ifdef DEBUG
-    mode_debug_output_func(relay_on);
+    if (mode_debug_output_func) {
+      mode_debug_output_func(relay_on);
+    }
   #endif
 
   TIM9->SR = 0;
 }
 
 void TIM3_IRQ_Handler(void) {
-  mode_timer_handler_func();
+  if (mode_timer_handler_func) {
+    mode_timer_handler_func();
+  }
   TIM3->SR = 0;
 }
 
@@ -461,7 +514,6 @@ uint8_t detect_mode_from_flash(void) {
   return MODE_UNCONFIGURED;
 }
 
-
 int main(void) {
   // ######################## FLASH HANDLING ###########################
   config_block_t current_cfg_in_ram;
@@ -473,7 +525,6 @@ int main(void) {
     init_config_pointers(&current_cfg_in_ram);
   }
   // ###################################################################
-
 
   // Init interrupt table
   init_interrupts(true);
@@ -507,9 +558,8 @@ int main(void) {
   // enable USB
   usb_init();
 
-  // pedal stuff
+  // Initialize DAC and ADC peripherals
   dac_init();
-  // Set DAC to safe center values at startup
   dac_set(0, DAC_SAFE_CENTER);
   dac_set(1, DAC_SAFE_CENTER);
   adc_init();
@@ -538,6 +588,12 @@ int main(void) {
 
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
 
+  if (!json_rpc_init(interceptor_methods)) {
+    puts("JSON RPC init failed\n");
+  } else {
+    puts("JSON RPC: interceptor_core ready\n");
+  }
+
   // Setup mode system after hardware init
   uint8_t mode = detect_mode_from_flash();
   setup_mode(mode);
@@ -549,7 +605,9 @@ int main(void) {
   
   // main loop
   while (1) {
-    mode_process_func();
+    if (mode_process_func) {
+      mode_process_func();
+    }
   }
 
   return 0;

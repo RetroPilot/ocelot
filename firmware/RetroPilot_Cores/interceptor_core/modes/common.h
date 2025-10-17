@@ -54,6 +54,50 @@ extern uint32_t enter_bootloader_mode;
 // DAC Safety variables
 extern uint32_t last_dac_0, last_dac_1;
 
+// USB control variables
+extern volatile bool usb_ctrl_active;
+extern uint32_t ctrl_timeout;
+
+// Control variables used by modes
+extern uint32_t ctrl_target_0, ctrl_target_1;
+extern int16_t ctrl_magnitude, ctrl_magnitude_alt;
+extern bool ctrl_override, ctrl_enable;
+extern uint32_t timeout_can, timeout_counter, timeout_vss_counter;
+extern uint32_t safety_last_dac_0, safety_last_dac_1;
+extern uint8_t current_mode;
+
+// External declarations for flash config
+extern const flash_config_t *signal_configs[];
+#define CFG_TYPE_ADC 3
+#define CFG_TYPE_SYS 1
+
+// Mode management functions
+void setup_mode(uint8_t mode);
+uint8_t detect_mode_from_flash(void);
+
 // DAC Safety functions
 uint32_t safe_dac_output(uint32_t new_val, uint32_t *last_val, uint8_t channel);
 bool validate_dac_peripheral(void);
+
+// Function implementations
+static inline uint32_t safe_dac_output_impl(uint32_t new_val, uint32_t *last_val, uint8_t channel) {
+  UNUSED(channel);
+  if (new_val < DAC_MIN_SAFE) new_val = DAC_MIN_SAFE;
+  if (new_val > DAC_MAX_SAFE) new_val = DAC_MAX_SAFE;
+  int32_t delta = (int32_t)new_val - (int32_t)*last_val;
+  if (delta > MAX_DAC_RATE) {
+    new_val = *last_val + MAX_DAC_RATE;
+  } else if (delta < -MAX_DAC_RATE) {
+    new_val = *last_val - MAX_DAC_RATE;
+  }
+  *last_val = new_val;
+  return new_val;
+}
+
+static inline bool validate_dac_peripheral_impl(void) {
+  uint32_t dac0_reg = DAC->DHR12R1;
+  uint32_t dac1_reg = DAC->DHR12R2;
+  if (dac0_reg > 4095 || dac1_reg > 4095) return false;
+  if (!(DAC->CR & DAC_CR_EN1) || !(DAC->CR & DAC_CR_EN2)) return false;
+  return true;
+}
