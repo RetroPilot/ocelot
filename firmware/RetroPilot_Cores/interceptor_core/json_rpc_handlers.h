@@ -21,7 +21,7 @@ static int json_system_info(const char* params, char* response, int max_len) {
 static int json_system_methods(const char* params, char* response, int max_len) {
   (void)params;
   return json_build_success(response, max_len,
-    "[\"system.info\",\"system.methods\",\"system.reset\",\"interceptor.get_values\",\"test_dac\",\"interceptor.emergency_stop\"]");
+    "[\"system.info\",\"system.methods\",\"system.reset\",\"interceptor.get_values\",\"interceptor.set_dac\",\"interceptor.emergency_stop\"]");
 }
 
 static int json_system_reset(const char* params, char* response, int max_len) {
@@ -56,8 +56,8 @@ static int json_interceptor_get_values(const char* params, char* response, int m
 }
 
 static int json_interceptor_set_dac(const char* params, char* response, int max_len) {
-  int dac0 = json_parse_int(params, "dac0");
-  int dac1 = json_parse_int(params, "dac1");
+  int dac0 = json_parse_int(params, "d0");
+  int dac1 = json_parse_int(params, "d1");
   
   if (dac0 >= DAC_MIN_SAFE && dac0 <= DAC_MAX_SAFE) {
     dac_output_0 = dac0;
@@ -94,7 +94,7 @@ const json_method_t interceptor_methods[] = {
   {"system.info", json_system_info},
   {"system.methods", json_system_methods},
   {"system.reset", json_system_reset},
-  {"test_dac", json_interceptor_set_dac},
+  {"interceptor.set_dac", json_interceptor_set_dac},
   {"interceptor.get_values", json_interceptor_get_values},
   {"interceptor.emergency_stop", json_interceptor_emergency_stop},
   {NULL, NULL}

@@ -1,8 +1,6 @@
 #ifndef JSON_RPC_H
 #define JSON_RPC_H
 
-#include <stdint.h>
-#include <stdbool.h>
 #include "obj/gitversion.h"
 
 #define JSON_MAX_RESPONSE_SIZE 2048
@@ -20,6 +18,8 @@ static const json_method_t* json_registered_methods = NULL;
 
 // String utilities
 static inline int json_strcpy_safe(char* dst, const char* src, int max_len) {
+  if (!dst || !src || max_len <= 0) return 0;
+  
   int i = 0;
   while (i < max_len - 1 && src[i] != '\0') {
     dst[i] = src[i];
@@ -56,14 +56,18 @@ static inline int json_int_to_str(char* buf, int value, int max_len) {
 
 // JSON parsing utilities
 static inline int json_find_key(const char* json, const char* key) {
-  int key_len = 0;
-  while (key[key_len] != '\0') key_len++;
+  if (!json || !key) return -1;
   
-  for (int i = 0; json[i] != '\0'; i++) {
+  int key_len = 0;
+  while (key[key_len] != '\0' && key_len < 64) key_len++;
+  if (key_len >= 64) return -1;
+  
+  for (int i = 0; i < 2048 && json[i] != '\0'; i++) {
     if (json[i] == '"') {
       int j = 0;
-      while (j < key_len && json[i + 1 + j] == key[j]) j++;
-      if (j == key_len && json[i + 1 + j] == '"' && json[i + 2 + j] == ':') {
+      while (j < key_len && (i + 1 + j) < 2048 && json[i + 1 + j] == key[j]) j++;
+      if (j == key_len && (i + 1 + j) < 2048 && (i + 2 + j) < 2048 && 
+          json[i + 1 + j] == '"' && json[i + 2 + j] == ':') {
         return i + 3 + j;
       }
     }
@@ -72,16 +76,25 @@ static inline int json_find_key(const char* json, const char* key) {
 }
 
 static inline int json_parse_string(const char* json, const char* key, char* value, int max_len) {
-  int pos = json_find_key(json, key);
-  if (pos < 0) return -1;
+  if (!json || !key || !value || max_len <= 0) return -1;
   
-  while (json[pos] == ' ' || json[pos] == '\t') pos++;
-  if (json[pos] != '"') return -1;
+  int pos = json_find_key(json, key);
+  if (pos < 0 || pos >= 2048) return -1;
+  
+  int safety_counter = 0;
+  while (safety_counter < 100 && pos < 2048 && (json[pos] == ' ' || json[pos] == '\t')) {
+    pos++;
+    safety_counter++;
+  }
+  if (pos >= 2048 || json[pos] != '"') return -1;
   pos++;
   
   int i = 0;
-  while (i < max_len - 1 && json[pos] != '"' && json[pos] != '\0') {
+  safety_counter = 0;
+  while (i < max_len - 1 && safety_counter < 1000 && pos < 2048 && 
+         json[pos] != '"' && json[pos] != '\0') {
     value[i++] = json[pos++];
+    safety_counter++;
   }
   value[i] = '\0';
   return i;
@@ -89,9 +102,14 @@ static inline int json_parse_string(const char* json, const char* key, char* val
 
 static inline int json_parse_int(const char* json, const char* key) {
   int pos = json_find_key(json, key);
-  if (pos < 0) return -1;
+  if (pos < 0 || pos >= 2048) return -1;
   
-  while (json[pos] == ' ' || json[pos] == '\t') pos++;
+  int safety_counter = 0;
+  while (safety_counter < 100 && pos < 2048 && (json[pos] == ' ' || json[pos] == '\t')) {
+    pos++;
+    safety_counter++;
+  }
+  if (pos >= 2048) return -1;
   
   int value = 0;
   bool negative = false;
@@ -101,7 +119,7 @@ static inline int json_parse_int(const char* json, const char* key) {
   }
   
   int digit_count = 0;
-  while (json[pos] >= '0' && json[pos] <= '9' && digit_count < 10) {
+  while (pos < 2048 && json[pos] >= '0' && json[pos] <= '9' && digit_count < 10) {
     value = value * 10 + (json[pos] - '0');
     pos++;
     digit_count++;
@@ -143,15 +161,23 @@ static inline int json_build_system_info(char* buffer, int max_len, const char* 
 }
 
 // Core JSON RPC functions
-static inline int json_rpc_init(const json_method_t* methods) {
+static inline bool json_rpc_init(const json_method_t* methods) {
+  if (!methods) {
+    return false;
+  }
+  
   json_registered_methods = methods;
   json_response_length = 0;
   json_response_buffer[0] = '\0';
-  return 0;
+  return true;
 }
 
 static inline int json_rpc_handle_request(const char* request, int len) {
-  (void)len;
+  if (!request || len <= 0 || len >= JSON_MAX_RESPONSE_SIZE) {
+    json_response_length = json_build_error(json_response_buffer, sizeof(json_response_buffer),
+      "parse_error", "Invalid request parameters");
+    return 0;
+  }
   
   char method[64];
   if (json_parse_string(request, "method", method, sizeof(method)) < 0) {
@@ -160,15 +186,22 @@ static inline int json_rpc_handle_request(const char* request, int len) {
     return 0;
   }
   
-  // Find and call handler
-  for (int i = 0; json_registered_methods[i].method != NULL; i++) {
+  // Find and call handler with timeout protection
+  for (int i = 0; i < JSON_MAX_METHODS && json_registered_methods[i].method != NULL; i++) {
     const char* reg_method = json_registered_methods[i].method;
     int j = 0;
-    while (reg_method[j] != '\0' && method[j] != '\0' && reg_method[j] == method[j]) j++;
+    while (j < 63 && reg_method[j] != '\0' && method[j] != '\0' && reg_method[j] == method[j]) j++;
     
     if (reg_method[j] == '\0' && method[j] == '\0') {
-      json_response_length = json_registered_methods[i].handler(request, json_response_buffer, sizeof(json_response_buffer));
-      return 0;
+      int result = json_registered_methods[i].handler(request, json_response_buffer, sizeof(json_response_buffer));
+      if (result > 0 && result < JSON_MAX_RESPONSE_SIZE) {
+        json_response_length = result;
+        return 1;
+      } else {
+        json_response_length = json_build_error(json_response_buffer, sizeof(json_response_buffer),
+          "internal_error", "Handler failed");
+        return 0;
+      }
     }
   }
   
@@ -178,14 +211,20 @@ static inline int json_rpc_handle_request(const char* request, int len) {
 }
 
 static inline int json_rpc_get_response(char* buffer, int offset, int max_len) {
-  if (json_response_length == 0) {
+  if (!buffer || max_len <= 0 || json_response_length == 0) {
     return 0;
   }
   
-  if (offset >= json_response_length) return 0;
+  if (offset < 0 || offset >= json_response_length || offset >= JSON_MAX_RESPONSE_SIZE) {
+    return 0;
+  }
   
   int remaining = json_response_length - offset;
   int copy_len = (remaining < max_len) ? remaining : max_len;
+  
+  if (copy_len <= 0 || (offset + copy_len) > JSON_MAX_RESPONSE_SIZE) {
+    return 0;
+  }
   
   for (int i = 0; i < copy_len; i++) {
     buffer[i] = json_response_buffer[offset + i];

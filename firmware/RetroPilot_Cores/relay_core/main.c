@@ -44,13 +44,21 @@ static const uint16_t string_product_desc[] = {
 #include "chimera/chimera.h"
 #include "drivers/json_rpc.h"
 
+// External declarations for chimera.h static variables
+extern USB_Setup_TypeDef last_setup_pkt;
+extern uint8_t *last_usb_data_ptr;
+extern volatile bool config_write_pending;
+
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
+#define ENTER_SOFTLOADER_MAGIC 0xdeadc0de
 uint32_t enter_bootloader_mode;
 
 #define USB_CTRL_TIMEOUT 50
 uint32_t ctrl_timeout = 0;
 uint32_t ctrl_in = 0;
-bool usb_ctrl_active = false;
+volatile bool usb_ctrl_active = false;
+
+
 
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
 void __initialize_hardware_early(void) {
@@ -102,17 +110,27 @@ void debug_ring_callback(uart_ring *ring) {
 
 // callback function to handle flash writes over USB
 void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
-  // Handle JSON RPC data
-  if (len_ep0 > 0 && len_ep0 < 512) {
-    // Ensure null termination
-    ((char*)usbdata_ep0)[len_ep0] = '\0';
-    
-    json_rpc_handle_request((char*)usbdata_ep0, len_ep0);
+  // Validate input parameters
+  if (usbdata_ep0 == NULL || len_ep0 <= 0 || len_ep0 >= 512) {
+    return;
   }
   
-  // Handle flash config writes
-  if ((usbdata_ep0 == last_usb_data_ptr) & (len_ep0 == sizeof(flash_config_t))) {
-    handle_deferred_config_write();
+  // Validate data content for JSON RPC (must start with '{' for JSON)
+  uint8_t *data = (uint8_t*)usbdata_ep0;
+  if (len_ep0 > 0 && len_ep0 < 512 && data[0] == '{') {
+    if (len_ep0 < 511) {
+      ((char*)usbdata_ep0)[len_ep0] = '\0';
+      if (!json_rpc_handle_request((char*)usbdata_ep0, len_ep0)) {
+        puts("JSON RPC handle request failed\n");
+      }
+    }
+  }
+  
+  // Handle flash config writes with strict validation
+  if ((usbdata_ep0 == last_usb_data_ptr) && (len_ep0 == sizeof(flash_config_t))) {
+    if (config_write_pending) {
+      handle_deferred_config_write();
+    }
   }
 }
 
@@ -188,6 +206,10 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
       break;
     case 0xFB: // JSON response output
       resp_len = json_rpc_get_response((char*)resp, setup->b.wValue.w, MAX_RESP_LEN);
+      if (resp_len <= 0) {
+        puts("JSON RPC get response failed\n");
+        resp_len = 0;
+      }
       break;
     case 0xFC: // JSON command input
       // Data will be handled in usb_cb_ep0_out callback
@@ -351,27 +373,51 @@ uint16_t tick = 0;
 
 // Helper function to build bit array JSON
 static int json_build_bit_array(char* buffer, int max_len, uint8_t value) {
+  if (!buffer || max_len <= 0) return 0;
+  
   char* p = buffer;
-  p += json_strcpy_safe(p, "[", max_len - (p - buffer));
+  int remaining = max_len - (p - buffer);
+  if (remaining <= 0) return 0;
+  
+  p += json_strcpy_safe(p, "[", remaining);
   for (int i = 0; i < 8; i++) {
-    if (i > 0) p += json_strcpy_safe(p, ",", max_len - (p - buffer));
-    p += json_strcpy_safe(p, ((value >> i) & 1) ? "1" : "0", max_len - (p - buffer));
+    remaining = max_len - (p - buffer);
+    if (remaining <= 0) break;
+    
+    if (i > 0) p += json_strcpy_safe(p, ",", remaining);
+    remaining = max_len - (p - buffer);
+    if (remaining <= 0) break;
+    
+    p += json_strcpy_safe(p, ((value >> i) & 1) ? "1" : "0", remaining);
   }
-  p += json_strcpy_safe(p, "]", max_len - (p - buffer));
+  remaining = max_len - (p - buffer);
+  if (remaining > 0) {
+    p += json_strcpy_safe(p, "]", remaining);
+  }
   return p - buffer;
 }
 
 // Simplified JSON handlers
 static int json_system_info(const char* params, char* response, int max_len) {
   (void)params;
+  if (!response || max_len <= 0) {
+    return 0;
+  }
+  
   char result[256];
   json_build_system_info(result, sizeof(result), "relay_core", "\"gpio\",\"relay\"");
   return json_build_success(response, max_len, result);
 }
 
 static int json_relay_set(const char* params, char* response, int max_len) {
+  if (!params || !response || max_len <= 0) {
+    return json_build_error(response, max_len, "invalid_params", "Invalid parameters");
+  }
+  
   int value = json_parse_int(params, "value");
   if (value >= 0 && value <= 255) {
+    usb_ctrl_active = true;
+    ctrl_timeout = 0;
     set_relays(value);
     char result[64];
     char* p = result;
@@ -385,6 +431,10 @@ static int json_relay_set(const char* params, char* response, int max_len) {
 
 static int json_relay_get(const char* params, char* response, int max_len) {
   (void)params;
+  if (!response || max_len <= 0) {
+    return 0;
+  }
+  
   char result[48];
   char* p = result;
   p += json_strcpy_safe(p, "{\"relays\":", sizeof(result) - (p - result));
@@ -395,6 +445,10 @@ static int json_relay_get(const char* params, char* response, int max_len) {
 
 static int json_gpio_read(const char* params, char* response, int max_len) {
   (void)params;
+  if (!response || max_len <= 0) {
+    return 0;
+  }
+  
   char result[48];
   char* p = result;
   p += json_strcpy_safe(p, "{\"gpio\":", sizeof(result) - (p - result));
@@ -406,6 +460,10 @@ static int json_gpio_read(const char* params, char* response, int max_len) {
 // Simple inline handlers for system methods
 static int json_system_methods(const char* params, char* response, int max_len) {
   (void)params;
+  if (!response || max_len <= 0) {
+    return 0;
+  }
+  
   return json_build_success(response, max_len,
     "[\"system.info\",\"system.methods\",\"system.reset\",\"relay.set\",\"relay.get\",\"gpio.read\"]");
 }
@@ -434,7 +492,7 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     relay_ctrl_can = 0;
   }
 
-  if (!usb_ctrl_active){
+  if (!usb_ctrl_active) {
     // check relay configs and set relays
     for (int i = 1; i < 9; i++) {
       const flash_config_t *cfg = signal_configs[i];
@@ -507,9 +565,9 @@ void TIM3_IRQ_Handler(void) {
   }
   timeout &= 0xFFU; // keep it in bounds
 
-  if (usb_ctrl_active){
+  if (usb_ctrl_active) {
     ctrl_timeout++;
-    if (ctrl_timeout > USB_CTRL_TIMEOUT){
+    if (ctrl_timeout > USB_CTRL_TIMEOUT) {
       usb_ctrl_active = false;
       ctrl_timeout = 0;
     }
@@ -621,8 +679,11 @@ int main(void) {
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
 
   // Initialize JSON RPC with custom handler
-  json_rpc_init(device_methods);
-  puts("JSON RPC: relay_core ready\n");
+  if (!json_rpc_init(device_methods)) {
+    puts("JSON RPC init failed\n");
+  } else {
+    puts("JSON RPC: relay_core ready\n");
+  }
 
   if (signal_configs[0] != NULL && (signal_configs[0]->sys.iwdg_en & 1)){
     puts("WATCHDOG ENABLED\n");

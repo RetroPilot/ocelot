@@ -1,7 +1,6 @@
 // ********************* Includes *********************
 #include "../../config.h"
 #include "libc.h"
-#include <string.h>
 
 #include "main_declarations.h"
 #include "critical.h"
@@ -82,19 +81,7 @@ uint32_t enter_bootloader_mode;
 uint32_t ctrl_timeout = 0;
 volatile bool usb_ctrl_active = false;
 
-static inline void set_usb_ctrl_active(bool val) {
-  __disable_irq();
-  usb_ctrl_active = val;
-  if (!val) ctrl_timeout = 0;
-  __enable_irq();
-}
 
-static inline bool get_usb_ctrl_active(void) {
-  __disable_irq();
-  bool val = usb_ctrl_active;
-  __enable_irq();
-  return val;
-}
 
 // Missing constants
 #define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
@@ -357,7 +344,8 @@ const uint8_t crc_poly = 0x1D;  // standard crc8
 // Configure interceptor mode and assign function pointers
 void setup_mode(uint8_t mode) {
   if (current_mode == MODE_UNCONFIGURED && mode != MODE_UNCONFIGURED) {
-    set_usb_ctrl_active(false);
+    usb_ctrl_active = false;
+    ctrl_timeout = 0;
   }
   
   current_mode = mode;
@@ -422,10 +410,11 @@ void CAN1_SCE_IRQ_Handler(void) {
 
 
 void TIM1_BRK_TIM9_IRQ_Handler(void) {
-  if (get_usb_ctrl_active()) {
+  if (usb_ctrl_active) {
     ctrl_timeout++;
     if (ctrl_timeout > USB_CTRL_TIMEOUT) {
-      set_usb_ctrl_active(false);
+      usb_ctrl_active = false;
+      ctrl_timeout = 0;
       if (current_mode == MODE_UNCONFIGURED) {
         dac_output_0 = safe_dac_output(adc_input_0, &safety_last_dac_0, 0);
         dac_output_1 = safe_dac_output(adc_input_1, &safety_last_dac_1, 1);
