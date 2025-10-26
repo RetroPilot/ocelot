@@ -18,10 +18,10 @@ static const json_method_t* json_registered_methods = NULL;
 
 // String utilities
 static inline int json_strcpy_safe(char* dst, const char* src, int max_len) {
-  if (!dst || !src || max_len <= 0) return 0;
+  if (!dst || !src || max_len <= 1) return 0;
   
   int i = 0;
-  while (i < max_len - 1 && src[i] != '\0') {
+  while (i < max_len - 1 && src[i]) {
     dst[i] = src[i];
     i++;
   }
@@ -59,15 +59,14 @@ static inline int json_find_key(const char* json, const char* key) {
   if (!json || !key) return -1;
   
   int key_len = 0;
-  while (key[key_len] != '\0' && key_len < 64) key_len++;
+  while (key[key_len] && key_len < 64) key_len++;
   if (key_len >= 64) return -1;
   
-  for (int i = 0; i < 2048 && json[i] != '\0'; i++) {
+  for (int i = 0; i < JSON_MAX_RESPONSE_SIZE && json[i]; i++) {
     if (json[i] == '"') {
       int j = 0;
-      while (j < key_len && (i + 1 + j) < 2048 && json[i + 1 + j] == key[j]) j++;
-      if (j == key_len && (i + 1 + j) < 2048 && (i + 2 + j) < 2048 && 
-          json[i + 1 + j] == '"' && json[i + 2 + j] == ':') {
+      while (j < key_len && json[i + 1 + j] == key[j]) j++;
+      if (j == key_len && json[i + 1 + j] == '"' && json[i + 2 + j] == ':') {
         return i + 3 + j;
       }
     }
@@ -79,22 +78,15 @@ static inline int json_parse_string(const char* json, const char* key, char* val
   if (!json || !key || !value || max_len <= 0) return -1;
   
   int pos = json_find_key(json, key);
-  if (pos < 0 || pos >= 2048) return -1;
+  if (pos < 0) return -1;
   
-  int safety_counter = 0;
-  while (safety_counter < 100 && pos < 2048 && (json[pos] == ' ' || json[pos] == '\t')) {
-    pos++;
-    safety_counter++;
-  }
-  if (pos >= 2048 || json[pos] != '"') return -1;
+  while (json[pos] == ' ' || json[pos] == '\t') pos++;
+  if (json[pos] != '"') return -1;
   pos++;
   
   int i = 0;
-  safety_counter = 0;
-  while (i < max_len - 1 && safety_counter < 1000 && pos < 2048 && 
-         json[pos] != '"' && json[pos] != '\0') {
+  while (i < max_len - 1 && json[pos] && json[pos] != '"') {
     value[i++] = json[pos++];
-    safety_counter++;
   }
   value[i] = '\0';
   return i;
@@ -102,14 +94,9 @@ static inline int json_parse_string(const char* json, const char* key, char* val
 
 static inline int json_parse_int(const char* json, const char* key) {
   int pos = json_find_key(json, key);
-  if (pos < 0 || pos >= 2048) return -1;
+  if (pos < 0) return -1;
   
-  int safety_counter = 0;
-  while (safety_counter < 100 && pos < 2048 && (json[pos] == ' ' || json[pos] == '\t')) {
-    pos++;
-    safety_counter++;
-  }
-  if (pos >= 2048) return -1;
+  while (json[pos] == ' ' || json[pos] == '\t') pos++;
   
   int value = 0;
   bool negative = false;
@@ -118,11 +105,9 @@ static inline int json_parse_int(const char* json, const char* key) {
     pos++;
   }
   
-  int digit_count = 0;
-  while (pos < 2048 && json[pos] >= '0' && json[pos] <= '9' && digit_count < 10) {
+  while (json[pos] >= '0' && json[pos] <= '9') {
     value = value * 10 + (json[pos] - '0');
     pos++;
-    digit_count++;
   }
   
   return negative ? -value : value;

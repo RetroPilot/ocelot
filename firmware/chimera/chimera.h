@@ -11,7 +11,7 @@
 #define CFG_TYPE_CAN  2
 #define CFG_TYPE_ADC  3
 #define CFG_TYPE_HALL  4
-#define GFG_TYPE_RELAY 5
+#define CFG_TYPE_RELAY 5
 
 #include <stdint.h>
 #include <stddef.h>
@@ -259,7 +259,7 @@ bool validate_flash_config(const config_block_t *cfg) {
 
   for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
     const flash_config_t *e = &cfg->entries[i];
-    if (e->cfg_type > GFG_TYPE_RELAY) {
+    if (e->cfg_type > CFG_TYPE_RELAY) {
       puts("Invalid config: unknown cfg_type at index ");
       puth(i);
       puts("\n");

@@ -26,14 +26,14 @@ static void default_process(void) {
   adc_input_1 = adc_get(13);
   
   if (!usb_ctrl_active) {
-    dac_output_0 = safe_dac_output(adc_input_0, &safety_last_dac_0, 0);
-    dac_output_1 = safe_dac_output(adc_input_1, &safety_last_dac_1, 1);
+    dac_output_0 = safe_dac_output_impl(adc_input_0, &safety_last_dac_0);
+    dac_output_1 = safe_dac_output_impl(adc_input_1, &safety_last_dac_1);
     dac_set(0, dac_output_0);
     dac_set(1, dac_output_1);
   } else {
     // When USB control is active, apply safety limits and set DAC
-    uint32_t safe_dac0 = safe_dac_output(dac_output_0, &safety_last_dac_0, 0);
-    uint32_t safe_dac1 = safe_dac_output(dac_output_1, &safety_last_dac_1, 1);
+    uint32_t safe_dac0 = safe_dac_output_impl(dac_output_0, &safety_last_dac_0);
+    uint32_t safe_dac1 = safe_dac_output_impl(dac_output_1, &safety_last_dac_1);
     dac_set(0, safe_dac0);
     dac_set(1, safe_dac1);
   }
@@ -42,38 +42,13 @@ static void default_process(void) {
 }
 
 static void default_can_rx_handler(int address, uint8_t *dat) {
+  UNUSED(address);
   UNUSED(dat);
-  // Only handle bootloader commands
-  if (address == CAN_UNCONFIGURED_INPUT) {
-    if (GET_BYTES_04(&CAN1->sFIFOMailBox[0]) == 0xdeadface) {
-      if (GET_BYTES_48(&CAN1->sFIFOMailBox[0]) == 0x0ab00b1e) {
-        enter_bootloader_mode = ENTER_SOFTLOADER_MAGIC;
-        NVIC_SystemReset();
-      } else if (GET_BYTES_48(&CAN1->sFIFOMailBox[0]) == 0x02b00b1e) {
-        enter_bootloader_mode = ENTER_BOOTLOADER_MAGIC;
-        NVIC_SystemReset();
-      }
-    }
-  }
+  // No CAN processing in unconfigured mode
 }
 
 static void default_timer_handler(void) {
-  // Send unconfigured status message
-  if ((CAN1->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) {
-    uint8_t dat[8] = {0};
-    dat[0] = 0xDE; // Unconfigured marker
-    dat[1] = 0xAD;
-    dat[7] = pkt_idx;
-    
-    CAN1->sTxMailBox[0].TDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
-    CAN1->sTxMailBox[0].TDHR = dat[4] | (dat[5] << 8) | (dat[6] << 16) | (dat[7] << 24);
-    CAN1->sTxMailBox[0].TDTR = 8;
-    CAN1->sTxMailBox[0].TIR = (CAN_UNCONFIGURED_OUTPUT << 21) | 1U;
-    ++pkt_idx;
-    pkt_idx &= 0xFU;
-  }
-  
-  // Blink LED
+  // Blink LED only - no CAN output in unconfigured mode
   current_board->set_led(LED_GREEN, led_value);
   led_value = !led_value;
 }

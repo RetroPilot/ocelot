@@ -5,8 +5,6 @@
 #define CAN_DIFFERENTIAL_OUTPUT 0x301U
 #define CAN_GAS_PEDAL_INPUT     0x200
 #define CAN_GAS_PEDAL_OUTPUT    0x201U
-#define CAN_UNCONFIGURED_INPUT  0x500U
-#define CAN_UNCONFIGURED_OUTPUT 0x501U
 
 // Fault state definitions
 #define NO_FAULT 0U
@@ -26,9 +24,7 @@
 extern uint32_t adc_input_0, adc_input_1;  // Primary ADC inputs
 extern uint32_t dac_output_0, dac_output_1; // Primary DAC outputs
 
-// Legacy aliases for compatibility
-#define pdl0 adc_input_0
-#define pdl1 adc_input_1
+
 
 // Mode-specific variables
 extern bool override;
@@ -75,13 +71,10 @@ extern const flash_config_t *signal_configs[];
 void setup_mode(uint8_t mode);
 uint8_t detect_mode_from_flash(void);
 
-// DAC Safety functions
-uint32_t safe_dac_output(uint32_t new_val, uint32_t *last_val, uint8_t channel);
-bool validate_dac_peripheral(void);
+
 
 // Function implementations
-static inline uint32_t safe_dac_output_impl(uint32_t new_val, uint32_t *last_val, uint8_t channel) {
-  UNUSED(channel);
+static inline uint32_t safe_dac_output_impl(uint32_t new_val, uint32_t *last_val) {
   if (new_val < DAC_MIN_SAFE) new_val = DAC_MIN_SAFE;
   if (new_val > DAC_MAX_SAFE) new_val = DAC_MAX_SAFE;
   int32_t delta = (int32_t)new_val - (int32_t)*last_val;

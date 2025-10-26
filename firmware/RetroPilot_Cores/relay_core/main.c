@@ -1,4 +1,4 @@
-// ********************* Includes *********************
+// Includes
 #include "../../config.h"
 #include "libc.h"
 
@@ -58,8 +58,6 @@ uint32_t ctrl_timeout = 0;
 uint32_t ctrl_in = 0;
 volatile bool usb_ctrl_active = false;
 
-
-
 // cppcheck-suppress unusedFunction ; used in headers not included in cppcheck
 void __initialize_hardware_early(void) {
   early();
@@ -71,10 +69,10 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 
 uint8_t gpio_state= 0;
 uint8_t relay_ctrl = 0;
-uint8_t relay_state = 0;  // Persistent relay state for JSON responses
+uint8_t relay_state = 0;
 
 void set_relays(uint8_t relays){
-  relay_state = relays;  // Store current state
+  relay_state = relays;
   uint8_t relay_buf = ~relays;
   set_gpio_output(GPIOA,  4, (relay_buf >> 0U) & 1U); 
   set_gpio_output(GPIOA,  5, (relay_buf >> 1U) & 1U);
@@ -99,7 +97,7 @@ uint8_t get_inputs(void){
   return ~input_buf;
 }
 
-// ********************* serial debugging *********************
+// Serial debugging
 
 void debug_ring_callback(uart_ring *ring) {
   char rcv;
@@ -108,14 +106,11 @@ void debug_ring_callback(uart_ring *ring) {
   }
 }
 
-// callback function to handle flash writes over USB
+
 void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
-  // Validate input parameters
   if (usbdata_ep0 == NULL || len_ep0 <= 0 || len_ep0 >= 512) {
     return;
   }
-  
-  // Validate data content for JSON RPC (must start with '{' for JSON)
   uint8_t *data = (uint8_t*)usbdata_ep0;
   if (len_ep0 > 0 && len_ep0 < 512 && data[0] == '{') {
     if (len_ep0 < 511) {
@@ -126,7 +121,7 @@ void usb_cb_ep0_out(void *usbdata_ep0, int len_ep0) {
     }
   }
   
-  // Handle flash config writes with strict validation
+
   if ((usbdata_ep0 == last_usb_data_ptr) && (len_ep0 == sizeof(flash_config_t))) {
     if (config_write_pending) {
       handle_deferred_config_write();
@@ -158,18 +153,15 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   unsigned int resp_len = 0;
   uart_ring *ur = NULL;
 
-  // Store the setup packet and data pointer for deferred processing if needed
-  // This must be done for all commands that might involve an OUT data phase
-  // and need deferred processing.
+  // Store setup for deferred processing
   memcpy(&last_setup_pkt, setup, sizeof(USB_Setup_TypeDef));
-  last_usb_data_ptr = usbdata; // Save the pointer to the buffer
+  last_usb_data_ptr = usbdata;
 
   switch (setup->b.bRequest) {
-    // **** 0xd1: enter bootloader mode
-    case 0xd1:
+    case 0xd1: // bootloader
       switch (setup->b.wValue.w) {
         case 0:
-          // only allow bootloader entry on debug builds
+
           #ifdef ALLOW_DEBUG
             if (hardwired) {
               puts("-> entering bootloader\n");
@@ -188,17 +180,14 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
           break;
       }
       break;
-    // **** 0xd8: reset ST
-    case 0xd8:
+    case 0xd8: // reset
       NVIC_SystemReset();
       break;
-    // **** 0xe0: uart read
-    case 0xe0:
+    case 0xe0: // uart read
       ur = get_ring_by_number(setup->b.wValue.w);
       if (!ur) {
         break;
       }
-      // read
       while ((resp_len < MIN(setup->b.wLength.w, MAX_RESP_LEN)) &&
                          getc(ur, (char*)&resp[resp_len])) {
         ++resp_len;
@@ -212,7 +201,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
       }
       break;
     case 0xFC: // JSON command input
-      // Data will be handled in usb_cb_ep0_out callback
+
       break;
     case 0xFD: {
       flash_unlock();
@@ -241,16 +230,16 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
       uint16_t length = setup->b.wLength.w;
       puts("USB Flash Read requested 0xFF/n");
 
-      // Make sure we're not reading past the end of the config block
+
       const uint8_t *flash_bytes = (const uint8_t *)CONFIG_FLASH_ADDR;
       if (*(uint32_t *)flash_bytes == FLASH_CONFIG_MAGIC) {
-        uint16_t max_len = MIN(length, MAX_RESP_LEN);  // cap to USB response size
+        uint16_t max_len = MIN(length, MAX_RESP_LEN);
         if (offset < sizeof(config_block_t)) {
           uint16_t remaining = sizeof(config_block_t) - offset;
           uint16_t copy_len = MIN(remaining, max_len);
           memcpy(resp, flash_bytes + offset, copy_len);
           resp_len = copy_len;
-          // puts("Chunked config block read\n");
+
         } else {
           puts("Offset out of range in config read\n");
         }
@@ -270,9 +259,9 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   return resp_len;
 }
 
-// ***************************** can port *****************************
+// CAN handlers
 
-// addresses to be used on CAN
+
 #define CAN_OUTPUT 0x601U
 #define CAN_INPUT  0x600U
 #define CAN_SIZE 5
@@ -287,22 +276,18 @@ void CAN1_TX_IRQ_Handler(void) {
 uint32_t timeout = 0;
 uint32_t current_index = 0;
 
-// Faults 
-// Hardware
 #define NO_FAULT 0U
 #define FAULT_STARTUP 1U
 #define FAULT_SENSOR 2U
-// CAN
 #define FAULT_SEND 3U
 #define FAULT_SCE 4U
 #define FAULT_TIMEOUT 5U
-// Bad messages
 #define FAULT_BAD_CHECKSUM 6U
 #define FAULT_INVALID 7U
 
 uint8_t state = FAULT_STARTUP;
 
-const uint8_t crc_poly = 0x1D;  // standard crc8
+const uint8_t crc_poly = 0x1D;
 uint8_t crc8_lut_1d[256];
 
 uint32_t relay_ctrl_can = 0;
@@ -314,7 +299,7 @@ void CAN1_RX0_IRQ_Handler(void) {
     // #endif
     int address = CAN->sFIFOMailBox[0].RIR >> 21;
     if (address == CAN_INPUT) {
-      // softloader entry
+
       if (GET_BYTES_04(&CAN->sFIFOMailBox[0]) == 0xdeadface) {
         if (GET_BYTES_48(&CAN->sFIFOMailBox[0]) == 0x0ab00b1e) {
           enter_bootloader_mode = ENTER_SOFTLOADER_MAGIC;
@@ -373,27 +358,16 @@ uint16_t tick = 0;
 
 // Helper function to build bit array JSON
 static int json_build_bit_array(char* buffer, int max_len, uint8_t value) {
-  if (!buffer || max_len <= 0) return 0;
+  if (!buffer || max_len < 18) return 0;  // Need at least "[0,0,0,0,0,0,0,0]"
   
   char* p = buffer;
-  int remaining = max_len - (p - buffer);
-  if (remaining <= 0) return 0;
-  
-  p += json_strcpy_safe(p, "[", remaining);
+  *p++ = '[';
   for (int i = 0; i < 8; i++) {
-    remaining = max_len - (p - buffer);
-    if (remaining <= 0) break;
-    
-    if (i > 0) p += json_strcpy_safe(p, ",", remaining);
-    remaining = max_len - (p - buffer);
-    if (remaining <= 0) break;
-    
-    p += json_strcpy_safe(p, ((value >> i) & 1) ? "1" : "0", remaining);
+    if (i > 0) *p++ = ',';
+    *p++ = ((value >> i) & 1) ? '1' : '0';
   }
-  remaining = max_len - (p - buffer);
-  if (remaining > 0) {
-    p += json_strcpy_safe(p, "]", remaining);
-  }
+  *p++ = ']';
+  *p = '\0';
   return p - buffer;
 }
 
@@ -414,47 +388,44 @@ static int json_relay_set(const char* params, char* response, int max_len) {
     return json_build_error(response, max_len, "invalid_params", "Invalid parameters");
   }
   
-  int value = json_parse_int(params, "value");
-  if (value >= 0 && value <= 255) {
-    usb_ctrl_active = true;
-    ctrl_timeout = 0;
-    set_relays(value);
-    char result[64];
+  int relay_num = json_parse_int(params, "relay");
+  int state = json_parse_int(params, "state");
+  
+  // If both parameters are missing or invalid, just return current state (polling mode)
+  if (relay_num < 0 && state < 0) {
+    char result[128];
     char* p = result;
-    p += json_strcpy_safe(p, "{\"success\":true,\"relay_ctrl\":", sizeof(result) - (p - result));
+    p += json_strcpy_safe(p, "{\"relay_ctrl\":", sizeof(result) - (p - result));
     p += json_build_bit_array(p, sizeof(result) - (p - result), relay_state);
+    p += json_strcpy_safe(p, ",\"gpio\":", sizeof(result) - (p - result));
+    p += json_build_bit_array(p, sizeof(result) - (p - result), gpio_state);
     p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
     return json_build_success(response, max_len, result);
   }
-  return json_build_error(response, max_len, "invalid_params", "Value must be 0-255");
-}
-
-static int json_relay_get(const char* params, char* response, int max_len) {
-  (void)params;
-  if (!response || max_len <= 0) {
-    return 0;
+  
+  if (relay_num >= 1 && relay_num <= 8 && (state == 0 || state == 1)) {
+    usb_ctrl_active = true;
+    ctrl_timeout = 0;
+    
+    if (state) {
+      relay_state |= (1U << (relay_num - 1));
+    } else {
+      relay_state &= ~(1U << (relay_num - 1));
+    }
+    
+    set_relays(relay_state);
+    
+    char result[128];
+    char* p = result;
+    p += json_strcpy_safe(p, "{\"success\":true,\"relay_ctrl\":", sizeof(result) - (p - result));
+    p += json_build_bit_array(p, sizeof(result) - (p - result), relay_state);
+    p += json_strcpy_safe(p, ",\"gpio\":", sizeof(result) - (p - result));
+    p += json_build_bit_array(p, sizeof(result) - (p - result), gpio_state);
+    p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
+    return json_build_success(response, max_len, result);
   }
   
-  char result[48];
-  char* p = result;
-  p += json_strcpy_safe(p, "{\"relays\":", sizeof(result) - (p - result));
-  p += json_build_bit_array(p, sizeof(result) - (p - result), relay_state);
-  p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
-  return json_build_success(response, max_len, result);
-}
-
-static int json_gpio_read(const char* params, char* response, int max_len) {
-  (void)params;
-  if (!response || max_len <= 0) {
-    return 0;
-  }
-  
-  char result[48];
-  char* p = result;
-  p += json_strcpy_safe(p, "{\"gpio\":", sizeof(result) - (p - result));
-  p += json_build_bit_array(p, sizeof(result) - (p - result), gpio_state);
-  p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
-  return json_build_success(response, max_len, result);
+  return json_build_error(response, max_len, "invalid_params", "Relay must be 1-8, state must be 0 or 1, or omit both for polling");
 }
 
 // Simple inline handlers for system methods
@@ -465,7 +436,7 @@ static int json_system_methods(const char* params, char* response, int max_len) 
   }
   
   return json_build_success(response, max_len,
-    "[\"system.info\",\"system.methods\",\"system.reset\",\"relay.set\",\"relay.get\",\"gpio.read\"]");
+    "[\"system.info\",\"system.methods\",\"system.reset\",\"relay.set\"]");
 }
 
 static int json_system_reset(const char* params, char* response, int max_len) {
@@ -480,8 +451,6 @@ static const json_method_t device_methods[] = {
   {"system.methods", json_system_methods},
   {"system.reset", json_system_reset},
   {"relay.set", json_relay_set},
-  {"relay.get", json_relay_get},
-  {"gpio.read", json_gpio_read},
   {NULL, NULL}
 };
 
@@ -496,7 +465,7 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     // check relay configs and set relays
     for (int i = 1; i < 9; i++) {
       const flash_config_t *cfg = signal_configs[i];
-      if (!cfg || cfg->cfg_type != GFG_TYPE_RELAY) continue;
+      if (!cfg || cfg->cfg_type != CFG_TYPE_RELAY) continue;
 
       // GPIO
       if (cfg->relay.gpio_en & 1U) {
@@ -610,6 +579,7 @@ int main(void) {
   // init devices
   clock_init();
   peripherals_init();
+  enable_fpu();
   detect_configuration();
   detect_board_type();
 

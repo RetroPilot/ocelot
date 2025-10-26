@@ -2,15 +2,7 @@
 
 #include "drivers/json_rpc.h"
 
-// JSON RPC handler functions
-static int json_system_info(const char* params, char* response, int max_len);
-static int json_system_methods(const char* params, char* response, int max_len);
-static int json_system_reset(const char* params, char* response, int max_len);
-static int json_interceptor_get_values(const char* params, char* response, int max_len);
-static int json_interceptor_set_dac(const char* params, char* response, int max_len);
-static int json_interceptor_emergency_stop(const char* params, char* response, int max_len);
 
-// Implementation
 static int json_system_info(const char* params, char* response, int max_len) {
   (void)params;
   char result[256];
@@ -21,7 +13,7 @@ static int json_system_info(const char* params, char* response, int max_len) {
 static int json_system_methods(const char* params, char* response, int max_len) {
   (void)params;
   return json_build_success(response, max_len,
-    "[\"system.info\",\"system.methods\",\"system.reset\",\"interceptor.get_values\",\"interceptor.set_dac\",\"interceptor.emergency_stop\"]");
+    "[\"system.info\",\"system.methods\",\"system.reset\",\"interceptor.get_values\",\"interceptor.set_dac\"]");
 }
 
 static int json_system_reset(const char* params, char* response, int max_len) {
@@ -85,10 +77,7 @@ static int json_interceptor_set_dac(const char* params, char* response, int max_
   return json_build_success(response, max_len, result);
 }
 
-static int json_interceptor_emergency_stop(const char* params, char* response, int max_len) {
-  (void)params;
-  return json_build_success(response, max_len, "{\"test\":true}");
-}
+
 
 const json_method_t interceptor_methods[] = {
   {"system.info", json_system_info},
@@ -96,6 +85,5 @@ const json_method_t interceptor_methods[] = {
   {"system.reset", json_system_reset},
   {"interceptor.set_dac", json_interceptor_set_dac},
   {"interceptor.get_values", json_interceptor_get_values},
-  {"interceptor.emergency_stop", json_interceptor_emergency_stop},
   {NULL, NULL}
 };

@@ -13,17 +13,13 @@ extern volatile bool usb_ctrl_active;
 extern uint32_t ctrl_timeout;
 extern bool ctrl_enable;
 
-// JSON RPC handler functions
-static int json_actuator_get_status(const char* params, char* response, int max_len);
-static int json_actuator_motor(const char* params, char* response, int max_len);
-static int json_actuator_relay(const char* params, char* response, int max_len);
-static int json_system_info(const char* params, char* response, int max_len);
-static int json_system_methods(const char* params, char* response, int max_len);
-static int json_system_reset(const char* params, char* response, int max_len);
+
 
 static int json_system_info(const char* params, char* response, int max_len) {
   (void)params;
-  return json_build_success(response, max_len, "{\"device\":\"actuator_core\",\"version\":\"1.0\",\"features\":[\"motor1\",\"motor2\",\"relay\",\"adc\"]}");
+  char result[256];
+  json_build_system_info(result, sizeof(result), "actuator_core", "\"motor1\",\"motor2\",\"relay\",\"adc\"");
+  return json_build_success(response, max_len, result);
 }
 
 static int json_system_methods(const char* params, char* response, int max_len) {
@@ -40,34 +36,37 @@ static int json_system_reset(const char* params, char* response, int max_len) {
 
 static int json_actuator_get_status(const char* params, char* response, int max_len) {
   (void)params;
-  char result[512];
+  char result[256];
   char* p = result;
-  p += json_strcpy_safe(p, "{", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, "\"motor1_pwm\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, motor1_pwm, sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"motor2_pwm\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, motor2_pwm, sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"motor1_dir\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, motor1_dir, sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"motor2_dir\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, motor2_dir, sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"motor1_enable\":", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, motor1_enable ? "true" : "false", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"motor2_enable\":", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, motor2_enable ? "true" : "false", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"relay_state\":", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, relay_state ? "true" : "false", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"adc0\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, adc[0], sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"adc1\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, adc[1], sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"state\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, state, sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"mode\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, current_mode, sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, ",\"usb_ctrl\":", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, usb_ctrl_active ? "true" : "false", sizeof(result) - (p - result));
-  p += json_strcpy_safe(p, "}", sizeof(result) - (p - result));
+  int remaining = sizeof(result);
+  
+  p += json_strcpy_safe(p, "{", remaining);
+  remaining -= (p - result);
+  
+  // Build JSON fields more efficiently
+  char temp[32];
+  json_int_to_str(temp, motor1_pwm, sizeof(temp));
+  p += json_strcpy_safe(p, "\"motor1_pwm\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  json_int_to_str(temp, motor2_pwm, sizeof(temp));
+  p += json_strcpy_safe(p, ",\"motor2_pwm\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  json_int_to_str(temp, motor1_dir, sizeof(temp));
+  p += json_strcpy_safe(p, ",\"motor1_dir\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  json_int_to_str(temp, motor2_dir, sizeof(temp));
+  p += json_strcpy_safe(p, ",\"motor2_dir\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  p += json_strcpy_safe(p, ",\"motor1_enable\":", remaining); p += json_strcpy_safe(p, motor1_enable ? "true" : "false", remaining);
+  p += json_strcpy_safe(p, ",\"motor2_enable\":", remaining); p += json_strcpy_safe(p, motor2_enable ? "true" : "false", remaining);
+  p += json_strcpy_safe(p, ",\"relay_state\":", remaining); p += json_strcpy_safe(p, relay_state ? "true" : "false", remaining);
+  json_int_to_str(temp, adc[0], sizeof(temp));
+  p += json_strcpy_safe(p, ",\"adc0\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  json_int_to_str(temp, adc[1], sizeof(temp));
+  p += json_strcpy_safe(p, ",\"adc1\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  json_int_to_str(temp, state, sizeof(temp));
+  p += json_strcpy_safe(p, ",\"state\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  json_int_to_str(temp, current_mode, sizeof(temp));
+  p += json_strcpy_safe(p, ",\"mode\":", remaining); p += json_strcpy_safe(p, temp, remaining);
+  p += json_strcpy_safe(p, ",\"usb_ctrl\":", remaining); p += json_strcpy_safe(p, usb_ctrl_active ? "true" : "false", remaining);
+  p += json_strcpy_safe(p, "}", remaining);
+  
   return json_build_success(response, max_len, result);
 }
 
@@ -89,7 +88,7 @@ static int json_actuator_motor(const char* params, char* response, int max_len) 
     usb_ctrl_active = true;
     ctrl_timeout = 0;
   } else {
-    return json_build_error(response, max_len, "Invalid params", "motor_num 1-2, pwm 0-100, dir 0-1");
+    return json_build_error(response, max_len, "invalid_params", "Motor 1-2, PWM 0-100, direction 0-1");
   }
   
   return json_build_success(response, max_len, "\"ok\"");
@@ -105,7 +104,7 @@ static int json_actuator_relay(const char* params, char* response, int max_len) 
     return json_build_success(response, max_len, "\"ok\"");
   }
   
-  return json_build_error(response, max_len, "Invalid params", "value 0-1");
+  return json_build_error(response, max_len, "invalid_params", "Value must be 0 or 1");
 }
 
 const json_method_t actuator_methods[] = {

@@ -1,4 +1,4 @@
-// ********************* Includes *********************
+// Includes
 #include "../../config.h"
 #include "libc.h"
 
@@ -51,32 +51,9 @@ void puth2(unsigned int i) { UNUSED(i); }
 // USB data buffer (defined in usb.h but need to declare extern)
 extern uint8_t usbdata[0x100];
 
-#define PEDAL_USB
-
-// TODO: integrate Chimera
-
-// #define CAN CAN1
-
 #define DEBUG
 
-// Faults 
-// Hardware
-#define NO_FAULT 0U
-#define FAULT_STARTUP 1U
-#define FAULT_SENSOR 2U
-// CAN
-#define FAULT_SEND 3U
-#define FAULT_SCE 4U
-#define FAULT_TIMEOUT 5U
-// Bad messages
-#define FAULT_BAD_CHECKSUM 6U
-#define FAULT_INVALID 7U
 
-#define FAULT_CONFIG_INVALID 14U
-#define FAULT_NOT_CONFIGURED 15U
-
-#define ENTER_BOOTLOADER_MAGIC 0xdeadbeef
-#define ENTER_SOFTLOADER_MAGIC 0xdeadc0de
 uint32_t enter_bootloader_mode;
 
 uint32_t ctrl_timeout = 0;
@@ -145,9 +122,9 @@ void __attribute__ ((noinline)) enable_fpu(void) {
   SCB->CPACR |= ((3UL << (10U * 2U)) | (3UL << (11U * 2U)));
 }
 
-// ********************* serial debugging *********************
+// Serial debugging
 
-// ********************* usb debugging *********************
+// USB debugging
 // void debug_ring_callback(uart_ring *ring) {
 //   char rcv;
 //   while (getc(ring, &rcv) != 0) {
@@ -227,9 +204,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   unsigned int resp_len = 0;
   // uart_ring *ur = NULL;
 
-  // Store the setup packet and data pointer for deferred processing if needed
-  // This must be done for all commands that might involve an OUT data phase
-  // and need deferred processing.
+  // Store setup for deferred processing
   memcpy(&last_setup_pkt, setup, sizeof(USB_Setup_TypeDef));
   last_usb_data_ptr = usbdata; 
 
@@ -349,7 +324,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
   return resp_len;
 }
 
-// ***************************** mode management *****************************
+// Mode management
 
 void setup_mode(uint8_t mode) {
   current_mode = mode;
@@ -406,7 +381,7 @@ uint8_t detect_mode_from_flash(void) {
   return MODE_DEFAULT;
 }
 
-// ***************************** can port *****************************
+// CAN handlers
 
 void CAN1_TX_IRQ_Handler(void) {
   // clear interrupt
@@ -467,7 +442,7 @@ void EXTI9_5_IRQ_Handler(void) {
   }
 }
 
-// ***************************** main code *****************************
+// Main
 void loop(void) {
   if (mode_process_func) {
     mode_process_func();
@@ -510,6 +485,7 @@ int main(void) {
   // init devices
   clock_init();
   peripherals_init();
+  enable_fpu();
   
   // No debug UART - PWM uses PA2/PA3
   

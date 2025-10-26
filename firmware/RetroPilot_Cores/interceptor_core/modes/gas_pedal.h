@@ -37,12 +37,12 @@ static void gas_pedal_process(void) {
   if (state == NO_FAULT) {
     uint32_t raw_dac_0 = MAX(ctrl_target_0, adc_input_0);
     uint32_t raw_dac_1 = MAX(ctrl_target_1, adc_input_1);
-    dac_output_0 = safe_dac_output(raw_dac_0, &safety_last_dac_0, 0);
-    dac_output_1 = safe_dac_output(raw_dac_1, &safety_last_dac_1, 1);
+    dac_output_0 = safe_dac_output_impl(raw_dac_0, &safety_last_dac_0);
+    dac_output_1 = safe_dac_output_impl(raw_dac_1, &safety_last_dac_1);
   } else {
     // In fault state, use safe center values
-    dac_output_0 = safe_dac_output(DAC_SAFE_CENTER, &safety_last_dac_0, 0);
-    dac_output_1 = safe_dac_output(DAC_SAFE_CENTER, &safety_last_dac_1, 1);
+    dac_output_0 = safe_dac_output_impl(DAC_SAFE_CENTER, &safety_last_dac_0);
+    dac_output_1 = safe_dac_output_impl(DAC_SAFE_CENTER, &safety_last_dac_1);
   }
   
   dac_set(0, dac_output_0);
