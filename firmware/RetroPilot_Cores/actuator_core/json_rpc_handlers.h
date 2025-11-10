@@ -7,13 +7,10 @@ extern uint8_t motor1_pwm, motor2_pwm;
 extern uint8_t motor1_dir, motor2_dir;
 extern uint8_t motor1_enable, motor2_enable;
 extern uint8_t relay_state;
-extern uint32_t adc[2];
 extern uint8_t state;
 extern volatile bool usb_ctrl_active;
 extern uint32_t ctrl_timeout;
 extern bool ctrl_enable;
-
-
 
 static int json_system_info(const char* params, char* response, int max_len) {
   (void)params;

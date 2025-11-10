@@ -795,6 +795,18 @@ class Panda(object):
                       cfg_type)
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
 
+  def flash_config_write_MOTOR(self, index, bridge_channel, motor_type, polarity):
+    reserved = bytes(20)
+    cfg_type = 6  # CFG_TYPE_MOTOR
+
+    dat = struct.pack("<3B20sB",
+                      bridge_channel,
+                      motor_type,
+                      polarity,
+                      reserved,
+                      cfg_type)
+    self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, index, 0, dat)
+
   def flash_config_read(self):
     MAX_CONFIG_ENTRIES = 32
     ENTRY_SIZE = 24
@@ -891,6 +903,16 @@ class Panda(object):
           "sig_len": sig_len,
           "shift_amt": shift_amt,
           "extra": extra,
+        })
+      elif cfg_type == 6:  # MOTOR
+        bridge_channel, motor_type, polarity, reserved, cfg_type = struct.unpack_from("<3B20sB", raw, offset)
+        entries.append({
+          "index": i,
+          "cfg_type": "MOTOR",
+          "bridge_channel": bridge_channel,
+          "type": motor_type,
+          "polarity": polarity,
+          "reserved": reserved,
         })
 
     return entries

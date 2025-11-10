@@ -1,6 +1,14 @@
 #pragma once
 #include "common.h"
 
+// Steer-specific variables
+static int16_t steer_torque_req;
+static int16_t steer_angle_req;
+static uint8_t steer_mode;
+
+// placeholder logic just to test this mode of Actuator Core
+// TODO: actually write something useable
+
 static void steer_init(void) {
   steer_torque_req = 0;
   steer_angle_req = 0;

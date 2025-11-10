@@ -12,6 +12,7 @@
 #define CFG_TYPE_ADC  3
 #define CFG_TYPE_HALL  4
 #define CFG_TYPE_RELAY 5
+#define CFG_TYPE_MOTOR 6
 
 #include <stdint.h>
 #include <stddef.h>
@@ -69,6 +70,13 @@ typedef struct __attribute__((packed, aligned(1))) {
       uint8_t shift_amt;
       uint8_t extra[10];
     } relay;
+
+    struct __attribute__((packed)) {
+      uint8_t bridge_channel;
+      uint8_t type;
+      uint8_t polarity;
+      uint8_t reserved[20];
+    } motor;
 
   };
   uint8_t cfg_type;
@@ -259,7 +267,7 @@ bool validate_flash_config(const config_block_t *cfg) {
 
   for (int i = 0; i < MAX_CONFIG_ENTRIES; i++) {
     const flash_config_t *e = &cfg->entries[i];
-    if (e->cfg_type > CFG_TYPE_RELAY) {
+    if (e->cfg_type > CFG_TYPE_MOTOR) {
       puts("Invalid config: unknown cfg_type at index ");
       puth(i);
       puts("\n");

@@ -32,6 +32,8 @@ chimera_config_list = [
 actuator_core_config_list = [
   (0,  "System Config",           ["SYS"]),
   (1,  "TPS Config",              ["ADC"]),
+  (2,  "Motor Config",            ["MOTOR"]),
+  (3,  "Clutch Config",           ["MOTOR"]),
 ]
 
 relay_core_config_list = [
@@ -133,6 +135,12 @@ def print_config_entries(entries):
     elif cfg_type == "RELAY":
       label = get_relay_label_from_type(e['label'])
       print(f"[{idx}] RELAY: {label}, can_cmp={e['can_cmp_val']}, gpio_en={e['gpio_en']}, gpio_in={e['gpio_in']}, can_addr=0x{e['can_addr']:X}, sig_len={e['sig_len']}, shift={e['shift_amt']}")
+    elif cfg_type == "MOTOR":
+      type_names = {1: "Motor", 2: "Clutch"}
+      polarity_names = {1: "Normal", 2: "Inverted"}
+      type_name = type_names.get(e.get('type', 0), "Unknown")
+      polarity_name = polarity_names.get(e.get('polarity', 0), "Unknown")
+      print(f"[{idx}] MOTOR: {type_name}, Bridge={e.get('bridge_channel', 0)}, Polarity={polarity_name}")
     else:
       print(f"[{idx}] UNKNOWN or DISABLED")
 
@@ -398,6 +406,52 @@ if __name__ == "__main__":
         
         panda.flash_config_write_RELAY(flash_index, selected_label, gpio_en, gpio_in, can_addr, sig_len, shift_amt, can_cmp)
         print(f"{GREEN}RELAY config written.")
+
+      elif config_type == "MOTOR":
+        print("Enter Motor config values:")
+        
+        # Determine if this is motor or clutch based on flash index
+        if flash_index == 2:
+          default_type = 1  # Motor
+          print("Configuring throttle motor...")
+        elif flash_index == 3:
+          default_type = 2  # Clutch
+          print("Configuring clutch...")
+        else:
+          print("Motor type selection:")
+          print("1: Motor (throttle actuator)")
+          print("2: Clutch (engagement mechanism)")
+          while True:
+            type_input = input("Enter type (1 or 2): ").strip()
+            if type_input in ["1", "2"]:
+              default_type = int(type_input)
+              break
+            print(f"{RED}Invalid type. Please enter 1 or 2.")
+        
+        print("\nBridge channel selection:")
+        print("1: Bridge 1 (PWM on PA2)")
+        print("2: Bridge 2 (PWM on PA3)")
+        while True:
+          bridge_input = input("Enter bridge channel (1 or 2): ").strip()
+          if bridge_input in ["1", "2"]:
+            bridge_channel = int(bridge_input)
+            break
+          print(f"{RED}Invalid bridge channel. Please enter 1 or 2.")
+        
+        print("\nPolarity selection:")
+        print("1: Normal (standard direction)")
+        print("2: Inverted (reversed direction)")
+        while True:
+          polarity_input = input("Enter polarity (1 or 2): ").strip()
+          if polarity_input in ["1", "2"]:
+            polarity = int(polarity_input)
+            break
+          print(f"{RED}Invalid polarity. Please enter 1 or 2.")
+        
+        panda.flash_config_write_MOTOR(flash_index, bridge_channel, default_type, polarity)
+        type_names = {1: "Motor", 2: "Clutch"}
+        polarity_names = {1: "Normal", 2: "Inverted"}
+        print(f"{GREEN}MOTOR config written: {type_names[default_type]}, Bridge {bridge_channel}, {polarity_names[polarity]}")
 
     except Exception as e:
       import traceback

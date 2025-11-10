@@ -18,16 +18,16 @@
 #define FAULT_CONFIG_INVALID 14U
 #define FAULT_NOT_CONFIGURED 15U
 
-// External variable declarations
-extern uint8_t enabled;
-extern uint32_t gas_set;
-extern uint8_t state;
-extern uint32_t adc[2];
-extern uint32_t timeout;
-extern uint32_t current_index;
-extern unsigned int pkt_idx;
-extern uint8_t crc8_lut_1d[256];
-extern uint32_t enter_bootloader_mode;
+// Shared variables across modes
+uint8_t state = FAULT_STARTUP;
+uint32_t adc[4];
+uint8_t enabled = 0;
+uint32_t timeout = 0;
+uint32_t current_index = 0;
+unsigned int pkt_idx = 0;
+uint8_t crc8_lut_1d[256];
+const uint8_t crc_poly = 0x1D;
+uint32_t enter_bootloader_mode;
 
 // USB control variables
 extern uint8_t motor1_pwm, motor2_pwm;
@@ -35,13 +35,7 @@ extern uint8_t motor1_dir, motor2_dir;
 extern uint8_t motor1_enable, motor2_enable;
 extern uint8_t relay_state;
 
-// Control variables
-extern int16_t steer_torque_req;
-extern int16_t steer_angle_req;
-extern uint8_t steer_mode;
-extern uint32_t tps_min, tps_max;
-extern uint16_t adc_tol;
-extern uint8_t adc_num;
+// Control variables (none currently shared)
 
 // USB control variables
 extern volatile bool usb_ctrl_active;
@@ -51,6 +45,7 @@ extern uint32_t ctrl_timeout;
 extern const flash_config_t *signal_configs[];
 #define CFG_TYPE_ADC 3
 #define CFG_TYPE_SYS 1
+#define CFG_TYPE_MOTOR 6
 
 // Mode management functions
 void setup_mode(uint8_t mode);

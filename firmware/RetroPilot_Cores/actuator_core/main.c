@@ -53,7 +53,6 @@ extern uint8_t usbdata[0x100];
 
 #define DEBUG
 
-
 uint32_t enter_bootloader_mode;
 
 uint32_t ctrl_timeout = 0;
@@ -64,7 +63,6 @@ void __initialize_hardware_early(void) {
   early();
 }
 #include "RetroPilot_Cores/actuator_core/can.h"
-#include "RetroPilot_Cores/actuator_core/modes/common.h"
 
 // Mode definitions
 #define MODE_DEFAULT 0
@@ -72,6 +70,7 @@ void __initialize_hardware_early(void) {
 #define MODE_CRUISE  2
 
 // Mode headers
+#include "RetroPilot_Cores/actuator_core/modes/common.h"
 #include "RetroPilot_Cores/actuator_core/modes/default.h"
 #include "RetroPilot_Cores/actuator_core/modes/steer.h"
 #include "RetroPilot_Cores/actuator_core/modes/cruise.h"
@@ -83,26 +82,7 @@ void (*mode_process_func)(void);
 void (*mode_can_rx_handler_func)(int address, uint8_t *dat);
 void (*mode_timer_handler_func)(void);
 
-// Current mode
 uint8_t current_mode = MODE_DEFAULT;
-
-uint8_t enabled = 0;
-uint32_t gas_set = 0;
-uint8_t state = FAULT_STARTUP;
-uint32_t adc[2];
-
-int16_t steer_torque_req = 0;
-int16_t steer_angle_req = 0;
-uint8_t steer_mode = 0;
-uint32_t tps_min = 0;
-uint32_t tps_max = 0;
-uint16_t adc_tol = 0;
-uint8_t adc_num = 0;
-uint32_t timeout = 0;
-uint32_t current_index = 0;
-unsigned int pkt_idx = 0;
-const uint8_t crc_poly = 0x1D;
-uint8_t crc8_lut_1d[256];
 
 uint8_t motor1_pwm = 0;
 uint8_t motor2_pwm = 0;
@@ -123,6 +103,7 @@ void __attribute__ ((noinline)) enable_fpu(void) {
 }
 
 // Serial debugging
+// disabled due to pin conflict with PWM (use the JSON interface instead for debugging)
 
 // USB debugging
 // void debug_ring_callback(uart_ring *ring) {
@@ -170,17 +151,6 @@ void usb_cb_ep2_out(void *usbdata, int len, bool hardwired) {
   UNUSED(hardwired);
   UNUSED(len);
   UNUSED(usbdata);
-  // uint8_t *usbdata8 = (uint8_t *)usbdata;
-  // uart_ring *ur = get_ring_by_number(usbdata8[0]);
-  // if ((len != 0) && (ur != NULL)) {
-  //   if ((usbdata8[0] < 2U)) {
-  //     for (int i = 1; i < len; i++) {
-  //       while (!putc(ur, usbdata8[i])) {
-  //         // wait
-  //       }
-  //     }
-  //   }
-  // }
 }
 // send on CAN
 void usb_cb_ep3_out(void *usbdata, int len, bool hardwired) {
@@ -239,19 +209,6 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
     case 0xd8:
       NVIC_SystemReset();
       break;
-    // **** 0xe0: uart read
-    // case 0xe0:
-    //   ur = get_ring_by_number(setup->b.wValue.w);
-    //   if (!ur) {
-    //     break;
-    //   }
-    //   // read
-    //   while ((resp_len < MIN(setup->b.wLength.w, MAX_RESP_LEN)) &&
-    //                      getc(ur, (char*)&resp[resp_len])) {
-    //     ++resp_len;
-    //   }
-    //   break;
-    // **** 0xf1: Clear CAN ring buffer.
     case 0xf1:
       if (setup->b.wValue.w == 0xFFFFU) {
         //puts("Clearing CAN Rx queue\n");
@@ -263,16 +220,6 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
         //puts("Clearing CAN CAN ring buffer failed: wrong bus number\n");
       }
       break;
-    // **** 0xf2: Clear UART ring buffer.
-    // case 0xf2:
-    //   {
-    //     uart_ring * rb = get_ring_by_number(setup->b.wValue.w);
-    //     if (rb != NULL) {
-    //       //puts("Clearing UART queue.\n");
-    //       clear_uart_buff(rb);
-    //     }
-    //     break;
-    //   }
     case 0xFB: // JSON response output
       resp_len = json_rpc_get_response((char*)resp, setup->b.wValue.w, MAX_RESP_LEN);
       if (resp_len <= 0) {
@@ -328,17 +275,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 
 void setup_mode(uint8_t mode) {
   current_mode = mode;
-  //puts("Setting actuator mode: ");
-  //puth(mode);
-  //puts(" (");
-  switch (mode) {
-    case MODE_STEER: //puts("STEER"); break;
-    case MODE_CRUISE: //puts("CRUISE"); break;
-    default: //puts("DEFAULT");
-      break;
-  }
-  //puts(")\n");
-  
+
   switch (mode) {
     case MODE_STEER:
       mode_init_func = steer_init;
@@ -459,10 +396,8 @@ int main(void) {
     // flash_config_format();
     // flash_lock();
     // NVIC_SystemReset();
-    //puts("FLASH NOT FORMATTED. PLEASE FORMAT BEFORE WRITING A CONFIG.\n");
   } else {
     init_config_pointers(&current_cfg_in_ram);
-    //puts("FLASH VALIDATED\n");
   }
 
   // ###################################################################
@@ -488,7 +423,6 @@ int main(void) {
   enable_fpu();
   
   // No debug UART - PWM uses PA2/PA3
-  
   detect_configuration();
   detect_board_type();
 
@@ -499,18 +433,17 @@ int main(void) {
   usb_init();
 
   // 8hz
-  timer_init(TIM9, 183);
-  NVIC_EnableIRQ(TIM1_BRK_TIM9_IRQn);
-
-  REGISTER_INTERRUPT(EXTI9_5_IRQn, EXTI9_5_IRQ_Handler, 0xFFFF, FAULT_INTERRUPT_RATE_TACH)
-  register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR3_EXTI9_PA, 0x00U);
-  register_set_bits(&(EXTI->IMR), (1U << 9));
-  register_set_bits(&(EXTI->RTSR), (1U << 9));
+  // TODO: use this timer for something
+  // timer_init(TIM9, 183);
+  // NVIC_EnableIRQ(TIM1_BRK_TIM9_IRQn);
+  // REGISTER_INTERRUPT(EXTI9_5_IRQn, EXTI9_5_IRQ_Handler, 0xFFFF, FAULT_INTERRUPT_RATE_TACH)
+  // register_set(&(SYSCFG->EXTICR[3]), SYSCFG_EXTICR3_EXTI9_PA, 0x00U);
+  // register_set_bits(&(EXTI->IMR), (1U << 9));
+  // register_set_bits(&(EXTI->RTSR), (1U << 9));
   // register_set_bits(&(EXTI->FTSR), (1U << 9));
   // NVIC_EnableIRQ(EXTI9_5_IRQn);
 
-  // pedal stuff
-  // dac_init();
+  // ADC
   adc_init();
 
   // init can
@@ -527,9 +460,7 @@ int main(void) {
   NVIC_EnableIRQ(TIM3_IRQn);
 
   // ============ GPIO SETUP ============
-  
-  // USART1 for debug (PA9=TX, PA10=RX) - already set in common_init_gpio
-  
+    
   // ADC input
   set_gpio_mode(GPIOC, 3, MODE_ANALOG);
   
@@ -584,33 +515,10 @@ int main(void) {
   gen_crc_lookup_table(crc_poly, crc8_lut_1d);
 
   if (signal_configs[0] != NULL && (signal_configs[0]->sys.iwdg_en & 1)){
-    //puts("WATCHDOG ENABLED\n");
     watchdog_init();
-  } else {
-    //puts("WATCHDOG DISABLED\n");
   }
 
-  if (signal_configs[1] != NULL){
-    tps_min = signal_configs[1]->adc.adc1;
-    tps_max = signal_configs[1]->adc.adc2; 
-    adc_tol = signal_configs[1]->adc.adc_tolerance;
-    adc_num = signal_configs[1]->adc.adc_num;
-    //puts("ADC configured\n");
-    //puts("MIN: "); puth(tps_min);
-    //puts(" MAX: "); puth(tps_max);
-    //puts(" TOL: "); puth(adc_tol);
-    //puts(" ADC# "); puth(adc_num); //puts("\n");
-  } else {
-    puts ("ADC not configured. Please use the config tool to set.\n");
-    state = FAULT_NOT_CONFIGURED;
-  }
-
-  // Initialize JSON RPC
-  if (!json_rpc_init(actuator_methods)) {
-    //puts("JSON RPC init failed\n");
-  } else {
-    //puts("JSON RPC: actuator core ready\n");
-  }
+  json_rpc_init(actuator_methods); 
 
   // Setup mode system
   uint8_t mode = detect_mode_from_flash();
@@ -624,7 +532,6 @@ int main(void) {
   RCC->APB2ENR |= RCC_APB2ENR_TIM9EN;
   pwm_init(TIM9, 1);
   pwm_init(TIM9, 2);
-
 
   //puts("**** INTERRUPTS ON ****\n");
   enable_interrupts();
