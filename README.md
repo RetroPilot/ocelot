@@ -57,67 +57,141 @@ firmware borrows heavily from [panda](https://github.com/commaai/panda), and sho
 - `panda` - panda compatibility mode
 - `pedal` - pedal module (STM32F205)
 
-### Flashing:
+### Prerequisites:
 
-on Docker (recommended) 
+#### Docker Setup (recommended):
+install Docker for your operating system. then build the container:
 ```
 ./build_container.sh
-./flash_docker.sh <project name> #build and flash after
 ```
 
-on Ubuntu 20.04
+#### Python Setup (for configuration tool):
+install pipenv:
 ```
-./build_project.sh <project_name>
-./flash.sh <project name>
+pip install pipenv
+```
+then setup the environment:
+```
+pipenv install
 ```
 
-providing no arguments will list all projects available to build and flash.
+### Flashing:
+
+Docker (recommended):
+enter the environment
+```
+pipenv shell
+```
+you will want to do this any time you compile firmware, flash, or use the configuration tool. flash the board with
+```
+./flash_docker.sh <project name>
+```
+
+where <project_name> is the board or project you want to flash, for example actuator_core for Actuator Core. providing no arguments will list all projects available to build and flash.
 
 ### Configuration tool:
 
-#### Any OS:
-use the web-based config tool available [here](https://coreconfig.retropilot.org/)
-
-or, use the python-based console tool:
-
 #### Mac/Linux:
-install pipenv. setup the environment with:
-`pipenv install` 
-then enter the environment with:
-`pipenv shell`
-once inside, you can run `./stm_flash_config.py` to configure your device. select the device you'd like to configure and follow the wizard.
+enter the pipenv environment:
+```
+pipenv shell
+```
+then run the configuration tool:
+```
+./stm_flash_config.py
+```
+select the device you'd like to configure and follow the wizard.
 
-##### config tool options:
+##### Configuration by Device:
 
-**CAN**: gateway and modify CAN messages. extract signals from specific bit positions, scale values, flip endianness, whatever you need.
+#### Actuator Core Configuration:
+
+**System Config** - set device operating mode:
+- `debug_lvl`: debug output level
+- `can_out_en`: enable CAN message transmission
+- `iwdg_en`: enable watchdog timer (0 while configuring, 1 when finished)
+- `mode`: operating mode (0=Default/USB control, 1=Steer, 2=Cruise)
+
+**TPS Config** - throttle position sensor setup (cruise mode only):
+- `adc1`: minimum throttle position (fully closed)
+- `adc2`: maximum throttle position (fully open)
+- `adc_tolerance`: position control deadzone
+- `adc_num`: ADC channel number (0 or 1)
+
+**Motor Config** - throttle motor setup:
+- `bridge_channel`: which H-bridge to use (1 or 2)
+- `type`: motor function (1=throttle motor)
+- `polarity`: motor direction (1=normal, 2=inverted)
+
+**Clutch Config** - clutch motor setup:
+- `bridge_channel`: which H-bridge to use (1 or 2)
+- `type`: motor function (2=clutch)
+- `polarity`: motor direction (1=normal, 2=inverted)
+
+#### Interceptor Core Configuration:
+
+**System Config** - set device operating mode:
+- `debug_lvl`: debug output level
+- `can_out_en`: enable CAN message transmission
+- `iwdg_en`: enable watchdog timer (0 while configuring, 1 when finished)
+- `mode`: operating mode (0=Unconfigured, 1=Differential, 2=Gas Pedal)
+- `override_threshold`: differential mode threshold (default 336)
+
+**ADC Channel Validation** - sensor validation setup:
+
+*Differential Mode (center point + tolerance):*
+- `adc1`: center value (expected sensor position)
+- `adc2`: unused (set to 0)
+- `adc_tolerance`: deviation tolerance (±)
+
+*Gas Pedal Mode (range limits):*
+- `adc1`: maximum valid value (e.g., 4000 for 4.0V)
+- `adc2`: minimum valid value (e.g., 200 for 0.2V)
+- `adc_tolerance`: hysteresis/noise tolerance
+
+#### Relay Core Configuration:
+
+**System Config** - basic system setup:
+- `debug_lvl`: debug output level
+- `can_out_en`: enable CAN message transmission
+- `iwdg_en`: enable watchdog timer (0 while configuring, 1 when finished)
+
+**Relay Configs** - individual relay setup:
+- `label`: predefined automotive function (TURN_L_FRONT, HEAD_L, BRAKE_L, etc.)
+- `gpio_en`: enable GPIO control (0 or 1)
+- `gpio_bitmask`: GPIO pin combination required
+- `can_addr`: CAN message ID to monitor (0 disables)
+- `can_cmp_val`: CAN signal value that triggers relay
+- `sig_len`/`shift_amt`: CAN signal extraction parameters
+
+#### Chimera Configuration:
+
+**System Config** - basic system setup:
+- `debug_lvl`: debug output level
+- `can_out_en`: enable CAN message transmission
+- `iwdg_en`: enable watchdog timer (0 while configuring, 1 when finished)
+
+**CAN Signal Configs** - gateway message processing:
 - `can_id`: which CAN message to process (hex like 0x123)
 - `shift_amt`/`sig_len`: which bits contain your signal (shift right X bits, then mask Y bits)
-- `scale_mult`/`scale_offs`: math to convert raw values (result = raw * mult + offset). scale_mult must be 10x actual value (e.g. use 15 for 1.5x scaling)
+- `scale_mult`/`scale_offs`: math to convert raw values (result = raw * mult + offset)
 - `endian_type`: byte order (0=little endian, 1=big endian)
 - `is_signed`: treat signal as signed integer or not
+- `enabled`: enable this signal processing (0 or 1)
 
-**ADC**: monitor analog inputs with thresholds. useful for voltage/current sensing or any analog signal you want to watch.
-- `adc1`/`adc2`: threshold values to trigger on
-- `adc_tolerance`: how much the reading can vary before triggering
-- `adc_num`: which ADC channel to monitor (0 or 1)
-
-**RELAY**: control relays via GPIO pins or CAN messages. use bitmasks to combine multiple GPIO inputs, or trigger relays based on specific CAN signal values.
-- `gpio_en`: enable GPIO control (1) or not (0)
-- `gpio_bitmask`: which GPIO pins must be high to activate relay (bit 0 = pin 0, etc.)
-- `can_addr`: CAN message ID to listen for relay commands (0 disables)
-- `can_cmp_val`: specific CAN signal value that triggers the relay
-
-**SYS**: system stuff like debug levels, CAN output enable/disable, watchdog timer settings.
-- `debug_lvl`: how much debug info to output
-- `can_out_en`: enable CAN message transmission
-- `iwdg_en`: enable watchdog timer. set to 0 if you need to write more flash params, set to 1 when you are finished configuring the device
-
-**VSS**: vehicle speed signal processing. configure pulses per mile/km and unit conversion for speed calculation.
+**HALL Sensor Configs** - vehicle speed and engine sensor processing:
 - `vss_ppd`: pulses per distance (mile or km)
-- `is_km`: use metric (1) or imperial (0) units
-- `rel_cnt`: reluctor tooth count for engine CPS
-- `skipped_tooth`: number of skipped teeth. for example 36-1 means 1 skipped tooth
+- `is_km`: use metric units (1=km, 0=miles)
+- `rel_cnt`: reluctor tooth count for crank position sensor
+- `skipped_teeth`: missing teeth count (e.g., 36-1 = 1 skipped tooth)
 
+**ADC Button Configs** - cruise control button detection:
+- `adc1`/`adc2`: threshold values for button states
+- `adc_tolerance`: noise tolerance
+- `adc_num`: ADC channel for cruise control buttons
+
+#### Any OS:
+use the web-based config tool available [here](https://coreconfig.retropilot.org/)
 
 ## Documentation
 full documentation and examples are available at the [RetroPilot Wiki](https://wiki.retropilot.org/index/hardware/ocelot):
