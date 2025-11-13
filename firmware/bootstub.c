@@ -6,13 +6,8 @@
 #include "config.h"
 #include "obj/gitversion.h"
 
-#ifdef STM32F4
-  #include "stm32f4xx.h"
-  #include "stm32f4xx_hal_gpio_ex.h"
-#else
-  #include "stm32f2xx.h"
-  #include "stm32f2xx_hal_gpio_ex.h"
-#endif
+#include "stm32f4xx.h"
+#include "stm32f4xx_hal_gpio_ex.h"
 
 // ******************** Prototypes ********************
 void puts(const char *a){ UNUSED(a); }

@@ -10,16 +10,7 @@ PC = not (EON or TICI)
 PREFIX = "arm-none-eabi-"
 BUILDER = "DEV"
 
-PROJECT_FLAGS_F2 = [
-  "-mcpu=cortex-m3",
-  "-msoft-float",
-  "-DSTM32F2",
-  "-DSTM32F205xx",
-  "-O2",
-  "-DPEDAL",
-]
-
-PROJECT_FLAGS_F4 = [
+PROJECT_FLAGS = [
   "-mcpu=cortex-m4",
   "-mhard-float",
   "-DSTM32F4",
@@ -32,70 +23,61 @@ PROJECT_FLAGS_F4 = [
 ]
 
 projects = {
-  "pedal": { 
-  "main": "pedal/main.c",
-  "startup": "startup_stm32f205xx.s",
-  "flags": PROJECT_FLAGS_F2
-  },
   "ibst": {
   "main": "ibst/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "smart_dsu": {
   "main": "smart_dsu/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "eps_gw": {
   "main": "eps_gw/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "gpio_example": {
   "main": "gpio_example/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "steer_actuator_demo": {
   "main": "steer_actuator_demo/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "rsg_gateway": {
   "main": "rsg_gateway/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "interceptor_core": {
   "main": "RetroPilot_Cores/interceptor_core/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "actuator_core": {
   "main": "RetroPilot_Cores/actuator_core/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "relay_core": {
   "main": "RetroPilot_Cores/relay_core/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
-  "panda": {
-  "main": "panda/main.c",
-  "startup": "startup_stm32f413xx.s",
-  "flags": [flag for flag in PROJECT_FLAGS_F4 if flag != "-DGATEWAY"]
-  },
+
   "sascm": {
   "main": "smart_ascm/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   },
   "chimera": {
   "main": "chimera/main.c",
   "startup": "startup_stm32f413xx.s",
-  "flags": PROJECT_FLAGS_F4
+  "flags": PROJECT_FLAGS
   }
 }
 
@@ -142,6 +124,8 @@ def get_key_header(name):
 def objcopy(source, target, env, for_signature):
     return '$OBJCOPY -O binary %s %s' % (source[0], target[0])
 
+bootstub_built = False
+
 def Build(env, gitversion, PROJECT, PROJECT_FLAGS, MAIN, STARTUP_FILE):
 
   linkerscript_fn = File("stm32_flash.ld").srcnode().abspath
@@ -179,18 +163,22 @@ def Build(env, gitversion, PROJECT, PROJECT_FLAGS, MAIN, STARTUP_FILE):
 
   project_obj_dir = f"obj/{PROJECT}"
   
-  # Bootstub
   startup = panda_env.Object(f"{project_obj_dir}/{PROJECT}_startup.o", STARTUP_FILE)
-  crypto_sources = ["crypto/rsa.c", "crypto/sha.c"]
-  crypto_objects = [
-    panda_env.Object(f"{project_obj_dir}/{PROJECT}_{os.path.basename(src).replace('.c', '.o')}", src) 
-    for src in crypto_sources
-  ]
   
-  bootstub_obj = panda_env.Object(f"{project_obj_dir}/{PROJECT}_bootstub.o", "bootstub.c")
-
-  bootstub_elf = panda_env.Program(f"{project_obj_dir}/bootstub.{PROJECT}.elf", [startup] + crypto_objects + [bootstub_obj])
-  bootstub_bin = panda_env.Objcopy(f"{project_obj_dir}/bootstub.{PROJECT}.bin", bootstub_elf)
+  # Build bootstub only once
+  global bootstub_built
+  if not bootstub_built:
+    bootstub_startup = panda_env.Object(f"obj/common_startup.o", STARTUP_FILE)
+    crypto_sources = ["crypto/rsa.c", "crypto/sha.c"]
+    crypto_objects = [
+      panda_env.Object(f"obj/common_{os.path.basename(src).replace('.c', '.o')}", src) 
+      for src in crypto_sources
+    ]
+    
+    bootstub_obj = panda_env.Object(f"obj/common_bootstub.o", "bootstub.c")
+    bootstub_elf = panda_env.Program(f"obj/bootstub.common.elf", [bootstub_startup] + crypto_objects + [bootstub_obj])
+    bootstub_bin = panda_env.Objcopy(f"obj/bootstub.common.bin", bootstub_elf)
+    bootstub_built = True
 
   # Build main
   main_elf = panda_env.Program(f"{project_obj_dir}/{PROJECT}.elf", [startup, MAIN],
