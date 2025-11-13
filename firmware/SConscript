@@ -175,9 +175,9 @@ def Build(env, gitversion, PROJECT, PROJECT_FLAGS, MAIN, STARTUP_FILE):
       for src in crypto_sources
     ]
     
-    bootstub_obj = panda_env.Object(f"obj/common_bootstub.o", "bootstub.c")
-    bootstub_elf = panda_env.Program(f"obj/bootstub.common.elf", [bootstub_startup] + crypto_objects + [bootstub_obj])
-    bootstub_bin = panda_env.Objcopy(f"obj/bootstub.common.bin", bootstub_elf)
+    bootstub_obj = panda_env.Object(f"obj/bootstub.o", "bootstub.c")
+    bootstub_elf = panda_env.Program(f"obj/bootstub.elf", [bootstub_startup] + crypto_objects + [bootstub_obj])
+    bootstub_bin = panda_env.Objcopy(f"obj/bootstub.bin", bootstub_elf)
     bootstub_built = True
 
   # Build main
