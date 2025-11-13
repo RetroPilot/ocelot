@@ -1,0 +1,34 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker container
+      run: ./build_container.sh
+    
+    - name: Build all projects
+      run: ./flash_docker.sh ALL
+    
+    - name: Prepare release artifacts
+      run: |
+        mkdir -p release-artifacts
+        cp firmware/obj/bootstub.bin release-artifacts/
+        cp firmware/obj/*.bin.signed release-artifacts/
+        cd release-artifacts && zip -r ../ocelot-firmware-${{ github.ref_name }}.zip .
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ocelot-firmware-${{ github.ref_name }}.zip
+        name: Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
