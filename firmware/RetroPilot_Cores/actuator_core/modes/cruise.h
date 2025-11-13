@@ -8,11 +8,18 @@ static uint16_t adc_tol;
 static uint8_t adc_num;
 static uint8_t motor_bridge, motor_polarity;
 static uint8_t clutch_bridge, clutch_polarity;
-static bool motor_configured, clutch_configured;
+static bool motor_configured, clutch_configured, tps_configured;
+static uint32_t tps_range;  // Pre-calculated (tps_max - tps_min)
+static bool new_throttle_data;
+
+// CAN input scaling constants
+#define CAN_THROTTLE_MAX 10000  // 0-10000 represents 0-100%
 
 static void cruise_init(void) {
   gas_set = 0;
   enabled = 0;
+  tps_configured = false;
+  new_throttle_data = false;
   
   // Load ADC config
   if (signal_configs[1] != NULL && signal_configs[1]->cfg_type == CFG_TYPE_ADC) {
@@ -20,6 +27,16 @@ static void cruise_init(void) {
     tps_max = signal_configs[1]->adc.adc2; 
     adc_tol = signal_configs[1]->adc.adc_tolerance;
     adc_num = signal_configs[1]->adc.adc_num;
+    
+    // Validate TPS configuration
+    if (tps_max > tps_min && tps_min > 0 && tps_max < 4096) {
+      tps_range = tps_max - tps_min;  // Pre-calculate for fast scaling
+      tps_configured = true;
+    } else {
+      puts("Invalid TPS config: min/max values invalid\n");
+      state = FAULT_CONFIG_INVALID;
+      return;
+    }
   } else {
     puts("ADC not configured. Please use the config tool to set.\n");
     state = FAULT_NOT_CONFIGURED;
@@ -47,12 +64,33 @@ static void cruise_init(void) {
   if (!motor_configured || !clutch_configured) {
     puts("Motor configs not found. Please configure motor and clutch.\n");
     state = FAULT_NOT_CONFIGURED;
+    return;
+  }
+  
+  if (!tps_configured) {
+    puts("TPS not properly configured\n");
+    state = FAULT_NOT_CONFIGURED;
+    return;
   }
 }
 
 static void cruise_process(void) {
   adc[0] = adc_get(12);
   adc[1] = adc_get(13);
+  
+  // Process new throttle data
+  if (new_throttle_data) {
+    gas_set = (gas_set * tps_range) / CAN_THROTTLE_MAX;
+    new_throttle_data = false;
+  }
+  
+  // Ensure system is properly configured before operating
+  if (!tps_configured || !motor_configured || !clutch_configured) {
+    state = FAULT_NOT_CONFIGURED;
+    enabled = 0;
+    gas_set = 0;
+    return;
+  }
   
   // check for clutch failure. is this necessary?
   if (!enabled && adc[adc_num] > (tps_min + adc_tol * 2)) {
@@ -115,10 +153,13 @@ static void cruise_can_rx_handler(int address, uint8_t *dat) {
       if (((current_index + 1U) & COUNTER_CYCLE) == index) {
         if (enable) {
           enabled = 1;
-          if (value_0 < 2000) {
-            gas_set = value_0;
+          if (value_0 <= CAN_THROTTLE_MAX) {
+            gas_set = value_0;  // Store raw CAN value temporarily
+            new_throttle_data = true;
           } else {
             state = FAULT_INVALID;
+            enabled = 0;
+            gas_set = 0;
           }
         } else {
           enabled = 0;
