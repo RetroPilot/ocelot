@@ -114,11 +114,7 @@ static void gas_pedal_timer_handler(void) {
   } else {
     state = FAULT_SEND;
   }
-
-  // Blink LED
-  current_board->set_led(LED_GREEN, led_value);
-  led_value = !led_value;
-
+  
   // Timeout handling
   if (timeout_can == 300U) {
     state = FAULT_TIMEOUT;

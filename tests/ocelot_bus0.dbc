@@ -1,0 +1,193 @@
+VERSION ""
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: Chimera InterceptorCore ActuatorCore RelayCore
+
+BO_ 80 CHIMERA_STEER_ANGLE: 6 Chimera
+ SG_ STEER_ANGLE : 8|16@1+ (0.1,0) [0|6553.5] "deg" Vector__XXX
+ SG_ STEER_ANGLE_RATE : 24|16@1+ (0.1,0) [0|6553.5] "deg/s" Vector__XXX
+ SG_ ENABLED : 36|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 32|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 117 CHIMERA_ENGINE: 8 Chimera
+ SG_ ENG_RPM : 40|16@1+ (1,0) [0|65535] "rpm" Vector__XXX
+ SG_ IGNITION : 32|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ BRAKE_PRESSED : 33|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ CPS_PULSE_COUNT : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ CPS_DT_US : 8|16@1+ (1,0) [0|65535] "us" Vector__XXX
+ SG_ STATE : 60|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 56|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 118 CHIMERA_VSS: 8 Chimera
+ SG_ VSS : 40|16@1+ (0.01,0) [0|655.35] "km/h" Vector__XXX
+ SG_ VSS_PULSE_COUNT : 24|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ VSS_DT_US : 8|16@1+ (1,0) [0|65535] "us" Vector__XXX
+ SG_ ENABLED : 60|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 56|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 256 CHIMERA_CRUISE: 8 Chimera
+ SG_ ADC1 : 40|16@1+ (1,0) [0|65535] "" Vector__XXX
+ SG_ ADC0 : 24|16@1+ (1,0) [0|65535] "" Vector__XXX
+ SG_ BUTTONS : 16|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ STATE : 60|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 56|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 512 INTERCEPTOR_GAS_INPUT: 6 Vector__XXX
+ SG_ DAC0 : 8|16@1+ (1,0) [0|4095] "" InterceptorCore
+ SG_ DAC1 : 24|16@1+ (1,0) [0|4095] "" InterceptorCore
+ SG_ ENABLE : 47|1@1+ (1,0) [0|1] "" InterceptorCore
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" InterceptorCore
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" InterceptorCore
+
+BO_ 513 INTERCEPTOR_GAS_OUTPUT: 6 InterceptorCore
+ SG_ ADC0 : 8|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ ADC1 : 24|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ STATE : 44|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 768 INTERCEPTOR_DIFF_INPUT: 6 Vector__XXX
+ SG_ DAC0 : 8|16@1+ (1,0) [0|4095] "" InterceptorCore
+ SG_ DAC1 : 24|16@1+ (1,0) [0|4095] "" InterceptorCore
+ SG_ ENABLE : 47|1@1+ (1,0) [0|1] "" InterceptorCore
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" InterceptorCore
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" InterceptorCore
+
+BO_ 769 INTERCEPTOR_DIFF_OUTPUT: 8 InterceptorCore
+ SG_ ADC0 : 8|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ ADC1 : 24|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ OVERRIDE : 40|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ STATE : 60|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 56|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1024 ACTUATOR_INPUT: 6 Vector__XXX
+ SG_ GAS_SET : 8|16@1+ (1,0) [0|2000] "" ActuatorCore
+ SG_ ENABLE : 47|1@1+ (1,0) [0|1] "" ActuatorCore
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" ActuatorCore
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" ActuatorCore
+
+BO_ 1025 ACTUATOR_OUTPUT: 6 ActuatorCore
+ SG_ ADC0 : 8|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ ADC1 : 24|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ STATE : 44|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1536 RELAY_INPUT: 6 Vector__XXX
+ SG_ TURN_L_FRONT : 8|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ DRL_L : 9|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ HEAD_L : 10|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ BRIGHT_L : 11|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ FOG_L_FRONT : 12|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ TURN_R_FRONT : 13|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ DRL_R : 14|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ HEAD_R : 15|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ BRIGHT_R : 16|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ FOG_R_FRONT : 17|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ TURN_L_REAR : 18|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ BRAKE_L : 19|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ FOG_L_REAR : 20|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ REVERSE_L : 21|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ TAIL_L : 22|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ TURN_R_REAR : 23|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ BRAKE_R : 24|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ FOG_R_REAR : 25|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ REVERSE_R : 26|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ TAIL_R : 27|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ BRAKE_CENTER : 28|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_1 : 29|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_2 : 30|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_3 : 31|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_4 : 32|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_5 : 33|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_6 : 34|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_7 : 35|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_8 : 36|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_9 : 37|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ SP_10 : 38|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ RESERVED : 39|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ ENABLE : 47|1@1+ (1,0) [0|1] "" RelayCore
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" RelayCore
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" RelayCore
+
+BO_ 1537 RELAY_OUTPUT: 5 RelayCore
+ SG_ GPIO_STATE : 8|16@1+ (1,0) [0|65535] "" Vector__XXX
+ SG_ STATE : 36|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 32|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1280 INTERCEPTOR_UNCONFIG_INPUT: 6 Vector__XXX
+ SG_ DAC0 : 8|16@1+ (1,0) [0|4095] "" InterceptorCore
+ SG_ DAC1 : 24|16@1+ (1,0) [0|4095] "" InterceptorCore
+ SG_ ENABLE : 47|1@1+ (1,0) [0|1] "" InterceptorCore
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" InterceptorCore
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" InterceptorCore
+
+BO_ 1281 INTERCEPTOR_UNCONFIG_OUTPUT: 6 InterceptorCore
+ SG_ ADC0 : 8|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ ADC1 : 24|16@1+ (1,0) [0|4095] "" Vector__XXX
+ SG_ STATE : 44|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ COUNTER : 40|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+
+CM_ BO_ 80 "Chimera steering angle and rate output";
+CM_ BO_ 117 "Chimera engine RPM, ignition, and brake status";
+CM_ BO_ 118 "Chimera vehicle speed signal output";
+CM_ BO_ 256 "Chimera ADC values and button states";
+CM_ BO_ 512 "Interceptor Core gas pedal mode input commands";
+CM_ BO_ 513 "Interceptor Core gas pedal mode ADC feedback";
+CM_ BO_ 768 "Interceptor Core differential mode input commands";
+CM_ BO_ 769 "Interceptor Core differential mode ADC feedback";
+CM_ BO_ 1024 "Actuator Core gas pedal position commands";
+CM_ BO_ 1025 "Actuator Core ADC feedback";
+CM_ BO_ 1536 "Relay Core label-based relay control commands";
+CM_ BO_ 1537 "Relay Core GPIO state feedback";
+CM_ BO_ 1280 "Interceptor Core unconfigured mode input";
+CM_ BO_ 1281 "Interceptor Core unconfigured mode output";
+
+VAL_ 80 ENABLED 0 "Disabled" 1 "Enabled";
+VAL_ 117 IGNITION 0 "Off" 1 "On";
+VAL_ 117 BRAKE_PRESSED 0 "Released" 1 "Pressed";
+VAL_ 512 ENABLE 0 "Disabled" 1 "Enabled";
+VAL_ 768 ENABLE 0 "Disabled" 1 "Enabled";
+VAL_ 1024 ENABLE 0 "Disabled" 1 "Enabled";
+VAL_ 1536 ENABLE 0 "Disabled" 1 "Enabled";
+
+VAL_ 117 STATE 0 "No Fault" 1 "Startup" 2 "Bad Checksum" 3 "Send Fault" 4 "SCE Fault" 5 "Timeout" 6 "Invalid" 7 "Counter";
+VAL_ 513 STATE 0 "No Fault" 1 "Startup" 2 "Sensor" 3 "Send" 4 "SCE" 5 "Timeout" 6 "Bad Checksum" 7 "Invalid";
+VAL_ 769 STATE 0 "No Fault" 1 "Startup" 2 "Sensor" 3 "Send" 4 "SCE" 5 "Timeout" 6 "Bad Checksum" 7 "Invalid";
+VAL_ 1025 STATE 0 "No Fault" 1 "Startup" 2 "Sensor" 3 "Send" 4 "SCE" 5 "Timeout" 6 "Bad Checksum" 7 "Invalid";
+VAL_ 1537 STATE 0 "No Fault" 1 "Startup" 2 "Sensor" 3 "Send" 4 "SCE" 5 "Timeout" 6 "Bad Checksum" 7 "Invalid";

@@ -48,13 +48,20 @@ void __attribute__ ((noinline)) enable_fpu(void) {
   FPU->FPCCR |= (FPU_FPCCR_ASPEN_Msk | FPU_FPCCR_LSPEN_Msk);
 }
 
+static inline int32_t float_to_i32_round(float val) {
+  if (val >= 0.0f) {
+    return (int32_t)(val + 0.5f);
+  }
+  return (int32_t)(val - 0.5f);
+}
+
 volatile uint32_t vss_pulse_count = 0;
 volatile uint32_t cps_pulse_count = 0;
 volatile uint32_t vss_dt_us = 0;
 volatile uint32_t cps_dt_us = 0;
 volatile uint32_t vss_last_us = 0;
 volatile uint32_t cps_last_us = 0;
-uint16_t vss = 0;
+float vss = 0.0f;
 
 uint32_t adc[2];
 uint32_t adc_cmp = 0;
@@ -68,9 +75,9 @@ bool relay_req_obdc = 0;
 bool relay_req_usb = 0;
 bool brake_pressed = 0;
 
-uint32_t steer_angle_rate = 0;
-uint32_t steer_angle = 0;
-uint32_t eng_rpm = 0;
+float steer_angle_rate = 0.0f;
+float steer_angle = 0.0f;
+float eng_rpm = 0.0f;
 bool brake_pressed_can = 0;
 
 uint32_t last_rpm = 0;
@@ -528,17 +535,17 @@ void CAN3_RX0_IRQ_Handler(void) {
 
     cfg = signal_configs[5]; // IGNITION_CAN
     if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
-      ignition_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
+      ignition_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) > 0.5f;
     }
 
     cfg = signal_configs[6]; // ENG_RPM
     if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
-      eng_rpm = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
+      eng_rpm = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]);
     }
 
     cfg = signal_configs[7]; // BRAKE_PRESSED
     if (cfg && (cfg->can.enabled & 1) && (address == cfg->can.can_id) && cfg->cfg_type == CFG_TYPE_CAN) {
-      brake_pressed_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) & 1U;
+      brake_pressed_can = extract_scaled_signal(cfg, &CAN3->sFIFOMailBox[0]) > 0.5f;
     }
 
     can_rx(2);
@@ -593,11 +600,15 @@ void TIM3_IRQ_Handler(void) {
     case 0: { // steer_angle
       uint8_t dat[6];
       cfg = signal_configs[1];
+      int32_t steer_angle_i = float_to_i32_round(steer_angle);
+      int32_t steer_angle_rate_i = float_to_i32_round(steer_angle_rate);
+      uint32_t steer_angle_u = (uint32_t)steer_angle_i;
+      uint32_t steer_angle_rate_u = (uint32_t)steer_angle_rate_i;
       dat[5] = (((cfg->can.enabled & 1) & 0xFU) << 4) | pkt_idx1;
-      dat[4] = (steer_angle_rate >> 8) & 0xFF;
-      dat[3] = (steer_angle_rate >> 0) & 0xFF;
-      dat[2] = (steer_angle >> 8) & 0xFF;
-      dat[1] = (steer_angle >> 0) & 0xFF;
+      dat[4] = (steer_angle_rate_u >> 8) & 0xFF;
+      dat[3] = (steer_angle_rate_u >> 0) & 0xFF;
+      dat[2] = (steer_angle_u >> 8) & 0xFF;
+      dat[1] = (steer_angle_u >> 0) & 0xFF;
       dat[0] = lut_checksum(dat, 6, crc8_lut_1d);
 
       to_send.RDLR = dat[0] | (dat[1] << 8) | (dat[2] << 16) | (dat[3] << 24);
@@ -613,10 +624,11 @@ void TIM3_IRQ_Handler(void) {
 
     case 1: { // ENGINE
       uint8_t dat[8];
+      uint32_t eng_rpm_u = (uint32_t)float_to_i32_round(eng_rpm);
       
       dat[7] = ((state & 0xFU) << 4) | pkt_idx2;
-      dat[6] = (eng_rpm >> 8) & 0xFF;
-      dat[5] = (eng_rpm >> 0) & 0xFF;
+      dat[6] = (eng_rpm_u >> 8) & 0xFF;
+      dat[5] = (eng_rpm_u >> 0) & 0xFF;
       dat[4] = ((brake_pressed | brake_pressed_can) & 1) << 1 | ((ignition_line | ignition_can) & 1);
       dat[3] = (cps_pulse_count >> 0) & 0xFF;
       dat[2] = (cps_dt_us >> 8) & 0xFF;
@@ -638,9 +650,10 @@ void TIM3_IRQ_Handler(void) {
       //VSS signal 
       uint8_t dat[8];
       cfg = signal_configs[3];
+      uint32_t vss_u = (uint32_t)float_to_i32_round(vss);
       dat[7] = ((cfg->can.enabled & 1) << 4) | pkt_idx3;
-      dat[6] = (vss >> 8) & 0xFF;
-      dat[5] = (vss >> 0) & 0xFF;
+      dat[6] = (vss_u >> 8) & 0xFF;
+      dat[5] = (vss_u >> 0) & 0xFF;
       dat[4] = 0;
       dat[3] = (vss_pulse_count >> 0) & 0xFF;
       dat[2] = (vss_dt_us >> 8) & 0xFF;
@@ -778,7 +791,7 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     puts(" STEER_ANGLE_MIN: ");
     puts((signal_configs[2]->can.enabled & 1) ? "true" : "false");
     puts(" steer angle: ");
-    puth(steer_angle);
+    puth((uint32_t)float_to_i32_round(steer_angle));
     puts("\n");
 
     puts("ADC0 RAW: ");
@@ -794,12 +807,12 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
     puts("VSS config type: ");
     puth(signal_configs[4]->cfg_type);
     puts("vss: ");
-    puth(vss);
+    puth((uint32_t)float_to_i32_round(vss));
     puts(" vss_pulse: ");
     puth(vss_dt_us);
     puts("\n");
     puts("engine rpm: ");
-    puth(eng_rpm);
+    puth((uint32_t)float_to_i32_round(eng_rpm));
     puts("\n");
   }
 
@@ -953,11 +966,11 @@ static int json_chimera_get_values(const char* params, char* response, int max_l
   p += json_strcpy_safe(p, ",\"adc1\":", sizeof(result) - (p - result));
   p += json_int_to_str(p, adc[1], sizeof(result) - (p - result));
   p += json_strcpy_safe(p, ",\"vss\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, vss, sizeof(result) - (p - result));
+  p += json_int_to_str(p, (uint32_t)float_to_i32_round(vss), sizeof(result) - (p - result));
   p += json_strcpy_safe(p, ",\"eng_rpm\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, eng_rpm, sizeof(result) - (p - result));
+  p += json_int_to_str(p, (uint32_t)float_to_i32_round(eng_rpm), sizeof(result) - (p - result));
   p += json_strcpy_safe(p, ",\"steer_angle\":", sizeof(result) - (p - result));
-  p += json_int_to_str(p, steer_angle, sizeof(result) - (p - result));
+  p += json_int_to_str(p, (uint32_t)float_to_i32_round(steer_angle), sizeof(result) - (p - result));
   p += json_strcpy_safe(p, ",\"ignition\":", sizeof(result) - (p - result));
   p += json_strcpy_safe(p, (ignition_line | ignition_can) ? "true" : "false", sizeof(result) - (p - result));
   p += json_strcpy_safe(p, ",\"brake_pressed\":", sizeof(result) - (p - result));

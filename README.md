@@ -89,6 +89,13 @@ you will want to do this any time you compile firmware, flash, or use the config
 
 where <project_name> is the board or project you want to flash, for example actuator_core for Actuator Core. providing no arguments will list all projects available to build and flash.
 
+#### WebUSB flashing tool
+open the flash tool in Google Chrome, ensuring WebUSB has been enabled in settings.
+
+https://flash.retropilot.org/
+
+
+
 ### Configuration tool:
 
 #### Mac/Linux:
@@ -173,8 +180,8 @@ select the device you'd like to configure and follow the wizard.
 
 **CAN Signal Configs** - gateway message processing:
 - `can_id`: which CAN message to process (hex like 0x123)
-- `shift_amt`/`sig_len`: which bits contain your signal (shift right X bits, then mask Y bits)
-- `scale_mult`/`scale_offs`: math to convert raw values (result = raw * mult + offset)
+- `shift_amt`/`sig_len`: DBC-style start bit and length (LSB for little endian, MSB for big endian)
+- `scale_factor`/`scale_offset`: math to convert raw values (result = raw * scale_factor + scale_offset)
 - `endian_type`: byte order (0=little endian, 1=big endian)
 - `is_signed`: treat signal as signed integer or not
 - `enabled`: enable this signal processing (0 or 1)

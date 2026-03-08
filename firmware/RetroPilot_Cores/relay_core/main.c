@@ -264,7 +264,7 @@ int usb_cb_control_msg(USB_Setup_TypeDef *setup, uint8_t *resp, bool hardwired) 
 
 #define CAN_OUTPUT 0x601U
 #define CAN_INPUT  0x600U
-#define CAN_SIZE 5
+#define CAN_SIZE 6
 #define COUNTER_CYCLE 0xFU
 
 void CAN1_TX_IRQ_Handler(void) {
@@ -317,9 +317,9 @@ void CAN1_RX0_IRQ_Handler(void) {
       for (int i=0; i<CAN_SIZE; i++) {
         dat[i] = GET_BYTE(&CAN->sFIFOMailBox[0], i);
       }
-      uint32_t value_0 = dat[1] | dat[2] << 8 | dat[3] << 16;
-      bool enable = ((dat[4] >> 7) & 1U) != 0U;
-      uint8_t index = dat[4] & COUNTER_CYCLE;
+      uint32_t value_0 = dat[1] | (dat[2] << 8) | (dat[3] << 16) | (dat[4] << 24);
+      bool enable = ((dat[5] >> 7) & 1U) != 0U;
+      uint8_t index = dat[5] & COUNTER_CYCLE;
       if (dat[0] == lut_checksum(dat, CAN_SIZE, crc8_lut_1d)) {
         if (((current_index + 1U) & COUNTER_CYCLE) == index) {
           timeout = 0;
@@ -475,8 +475,8 @@ void TIM1_BRK_TIM9_IRQ_Handler(void) {
       }
 
       // CAN_CTRL_RP
-      if (cfg->relay.type & 1U){
-        if (relay_ctrl_can == cfg->relay.type){
+      if (cfg->relay.type != 0) {
+        if (relay_ctrl_can & cfg->relay.type) {
           relay_ctrl |= (1U << (i-1));
         }
       }

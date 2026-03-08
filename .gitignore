@@ -18,3 +18,5 @@ examples/output.csv
 nosetests.xml
 .mypy_cache/
 .sconsign.dblite
+release-artifacts/*
+*.zip

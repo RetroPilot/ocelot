@@ -690,15 +690,15 @@ class Panda(object):
     print(f"Data (hex): {dat.hex()}")
     self._handle.controlWrite(Panda.REQUEST_OUT, 0xFE, 0, 0, dat)
 
-  def flash_config_write_CAN(self, index, can_id, scale_offs, scale_mult, msg_len_bytes, sig_type, shift_amt, sig_len, endian_type, enabled, is_signed):
+  def flash_config_write_CAN(self, index, can_id, scale_factor, scale_offset, msg_len_bytes, sig_type, shift_amt, sig_len, endian_type, enabled, is_signed):
     # assert 0 <= index < 32
-    extra = bytes(6)
+    extra = bytes(4)
     cfg_type = 2  # CFG_TYPE_CAN
 
-    dat = struct.pack("<Iih7B6sB",
+    dat = struct.pack("<Iff7B4sB",
                       can_id,
-                      scale_offs,
-                      scale_mult,
+                      scale_factor,
+                      scale_offset,
                       msg_len_bytes,
                       sig_type,
                       shift_amt,
@@ -848,13 +848,13 @@ class Panda(object):
         })
 
       elif cfg_type == 2:  # CAN
-        can_id, scale_offs, scale_mult, msg_len, sig_type, shift_amt, sig_len, endian, enabled, is_signed, raw_flags, cfg_type = struct.unpack_from("<Iih7B6sB", raw, offset)
+        can_id, scale_factor, scale_offset, msg_len, sig_type, shift_amt, sig_len, endian, enabled, is_signed, raw_flags, cfg_type = struct.unpack_from("<Iff7B4sB", raw, offset)
         entries.append({
           "index": i,
           "cfg_type": "CAN",
           "can_id": can_id,
-          "scale_offs": scale_offs,
-          "scale_mult": scale_mult,
+          "scale_factor": scale_factor,
+          "scale_offset": scale_offset,
           "msg_len_bytes": msg_len,
           "sig_type": sig_type,
           "shift_amt": shift_amt,

@@ -1,6 +1,7 @@
 // header file for chimera's gateway config wizardee
 #include <stdint.h>
 #include <stddef.h>
+#include "common/RPCanUtils.h"
 
 #define MAX_CONFIG_ENTRIES 32
 #define FLASH_CONFIG_MAGIC 0xDEADBEEF
@@ -13,9 +14,6 @@
 #define CFG_TYPE_HALL  4
 #define CFG_TYPE_RELAY 5
 #define CFG_TYPE_MOTOR 6
-
-#include <stdint.h>
-#include <stddef.h>
 
 typedef struct __attribute__((packed, aligned(1))) {
   union {
@@ -30,8 +28,8 @@ typedef struct __attribute__((packed, aligned(1))) {
 
     struct __attribute__((packed)) {
       uint32_t can_id;
-      int32_t scale_offs;
-      int16_t scale_mult;
+      float scale_factor;
+      float scale_offset;
       uint8_t msg_len_bytes;
       uint8_t sig_type;
       uint8_t shift_amt;
@@ -39,7 +37,7 @@ typedef struct __attribute__((packed, aligned(1))) {
       uint8_t endian_type;
       uint8_t enabled;
       uint8_t is_signed;
-      uint8_t extra[6];
+      uint8_t extra[4];
     } can;
 
     struct __attribute__((packed)) {
@@ -319,26 +317,18 @@ void init_config_pointers(const config_block_t *cfg) {
   }
 }
 
-static inline int32_t extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOMailBox_TypeDef *msg) {
-  uint64_t can_raw = 0;
-  for (int i = 0; i < cfg->can.msg_len_bytes; i++) {
-    can_raw = (can_raw << 8) & 0xFFFFFFFFFFFFFFFFULL;
-    can_raw |= GET_BYTE(msg, i);
+static inline float extract_scaled_signal(const flash_config_t *cfg, CAN_FIFOMailBox_TypeDef *msg) {
+  RPCanUtilsFrame frame = {0};
+  uint8_t dlc = cfg->can.msg_len_bytes;
+  if (dlc > 8U) {
+    dlc = 8U;
+  }
+  frame.dlc = dlc;
+  for (uint8_t i = 0; i < dlc; i++) {
+    frame.data[i] = (uint8_t)GET_BYTE(msg, i);
   }
 
-  uint32_t raw_val = (can_raw >> cfg->can.shift_amt) & ((1ULL << cfg->can.sig_len) - 1);
-
-  // Sign-extend if needed
-  if (cfg->can.is_signed & 1) {
-    // If the sign bit is set
-    if (raw_val & (1U << (cfg->can.sig_len - 1))) {
-      raw_val |= ~((1U << cfg->can.sig_len) - 1);  // fill upper bits with 1's
-    }
-  }
-
-  int32_t val = (int32_t)raw_val;
-  val = val * cfg->can.scale_mult + cfg->can.scale_offs;
-  return val;
+  return rpcan_extract_scaled(&frame, cfg->can.shift_amt, cfg->can.sig_len, cfg->can.endian_type, cfg->can.is_signed, cfg->can.scale_factor, cfg->can.scale_offset);
 }
 
 void putb(uint32_t i) {

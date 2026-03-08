@@ -1,28 +1,158 @@
-This is the firmware for the comma pedal. It borrows a lot from panda.
+# Interceptor Core Firmware
 
-The comma pedal is a gas pedal interceptor for Honda/Acura. It allows you to "virtually" press the pedal.
+Interceptor Core firmware for analog sensor interception and injection. Supports multiple operating modes for different automotive applications.
 
-This is the open source software. Note that it is not ready to use yet.
+**⚠️ WARNING: Interceptor Core for steering applications is for RESEARCH AND DEVELOPMENT ONLY. Do not use on public roads. Use at your own risk with extreme caution, controlled environments, and always have backup safety systems.**
 
-== Test Plan ==
+## Operating Modes
 
-* Startup
-** Confirm STATE_FAULT_STARTUP
-* Timeout
-** Send value
-** Confirm value is output
-** Stop sending messages
-** Confirm value is passthru after 100ms
-** Confirm STATE_FAULT_TIMEOUT
-* Random values
-** Send random 6 byte messages
-** Confirm random values cause passthru
-** Confirm STATE_FAULT_BAD_CHECKSUM
-* Same message lockout
-** Send same message repeated
-** Confirm timeout behavior
-* Don't set enable
-** Confirm no output
-* Set enable and values
-** Confirm output
+### Mode 0: Unconfigured (Default)
+- Passthrough mode - ADC input directly to DAC output
+- No CAN control, USB control only
+- Safe fallback when no valid configuration found
 
+### Mode 1: Differential (Steering Applications)
+- Intercepts differential torque sensor signals
+- Applies torque commands from CAN while preserving driver override
+- Speed-based torque scaling for safety
+- Override detection when driver fights the system
+
+### Mode 2: Gas Pedal
+- Intercepts gas pedal position signals
+- Takes MAX of CAN command and physical pedal position
+- Allows "virtual" gas pedal input while preserving driver control
+
+## Configuration Guide
+
+### Using stm_flash_config.py
+
+1. Enter pipenv environment: `pipenv shell`
+2. Run configuration tool: `./stm_flash_config.py`
+3. Select your Interceptor Core device
+4. Follow the configuration wizard for your chosen mode
+
+### Configuration Steps
+
+1. **Format flash** (if needed): Use config tool
+2. **Configure System Config**: Set mode and basic parameters
+3. **Configure ADC channels**: Set validation parameters for both channels
+4. **Enable CAN output**: Set `can_out_en = 1` if using CAN control
+5. **Enable watchdog**: Set `iwdg_en = 1` when configuration complete
+
+## System Config Parameters
+
+**Required for all modes:**
+- `mode`: Operating mode (0=Unconfigured, 1=Differential, 2=Gas Pedal)
+- `can_out_en`: Enable CAN message transmission (0=disabled, 1=enabled)
+- `iwdg_en`: Enable watchdog timer (0 while configuring, 1 when finished)
+- `debug_lvl`: Debug output level (0-3)
+
+**Differential mode only:**
+- `override_threshold`: Driver override detection threshold (default 336)
+
+## ADC Channel Configuration
+
+Both ADC channels (0 and 1) must be configured for modes 1 and 2.
+
+### Differential Mode (center point + tolerance)
+- `adc1`: Center value (expected neutral sensor position)
+- `adc2`: Unused (set to 0)
+- `adc_tolerance`: Deviation tolerance (±)
+- `adc_en`: Enable validation (must be 1)
+
+### Gas Pedal Mode (range limits)
+- `adc1`: Maximum valid value (e.g., 4000 for 4.0V)
+- `adc2`: Minimum valid value (e.g., 200 for 0.2V)
+- `adc_tolerance`: Noise tolerance
+- `adc_en`: Enable validation (must be 1)
+
+## CAN Communication
+
+### CAN Addresses
+- **Differential Mode**: Input 0x300, Output 0x301, Speed 0x76
+- **Gas Pedal Mode**: Input 0x200, Output 0x201
+
+### CAN Input Message Format (6 bytes)
+```
+Byte 0: CRC8 checksum
+Byte 1: Value 0 (low byte)
+Byte 2: Value 0 (high byte)
+Byte 3: Value 1 (low byte)
+Byte 4: Value 1 (high byte)
+Byte 5: [Enable bit (bit 7)] | [Counter (bits 0-3)]
+```
+
+### CAN Output Messages
+
+**Differential Mode (8 bytes):**
+```
+Byte 0: CRC8 checksum
+Byte 1-2: ADC0 value (little endian)
+Byte 3-4: ADC1 value (little endian)
+Byte 5: Override flag
+Byte 6: Reserved
+Byte 7: [State (bits 4-7)] | [Counter (bits 0-3)]
+```
+
+**Gas Pedal Mode (6 bytes):**
+```
+Byte 0: CRC8 checksum
+Byte 1-2: ADC0 value (little endian)
+Byte 3-4: ADC1 value (little endian)
+Byte 5: [State (bits 4-7)] | [Counter (bits 0-3)]
+```
+
+### Vehicle Speed Message (Differential Mode Only)
+
+**Required for differential mode operation.** Without valid speed messages, the system will fault with `FAULT_TIMEOUT_VSS`.
+
+**Speed Input Message 0x76 (8 bytes):**
+```
+Byte 0: CRC8 checksum
+Byte 1-4: Reserved
+Byte 5-6: Vehicle speed (little endian, units as configured)
+Byte 7: [Reserved (bits 4-7)] | [Counter (bits 0-3)]
+```
+
+**For bench testing:** Send speed messages at 20Hz with a reasonable speed value (e.g., 25 mph = 0x0019) to prevent VSS timeout.
+
+### Enabling CAN Communication
+Set `can_out_en = 1` in System Config to enable CAN message transmission. Without this, the device will not send CAN output messages.
+
+## Safety Features
+
+- **Watchdog timer**: Resets system if main loop hangs
+- **CAN timeout**: Disables control if no messages received (35ms differential, 15ms gas pedal)
+- **ADC validation**: Ensures sensor readings are within expected range
+- **DAC rate limiting**: Prevents rapid output changes (max 50 counts/cycle)
+- **Override detection**: Differential mode detects driver intervention
+- **Speed scaling**: Differential mode reduces assist at low speeds
+- **Magnitude limits**: Hard limits on control commands
+
+## Fault States
+
+- `NO_FAULT (0)`: Normal operation
+- `FAULT_STARTUP (1)`: Initial state on boot
+- `FAULT_SENSOR (2)`: ADC/DAC validation failed
+- `FAULT_TIMEOUT (5)`: CAN communication timeout
+- `FAULT_BAD_CHECKSUM (6)`: Invalid CAN message checksum
+- `FAULT_INVALID_CKSUM (7)`: Invalid enable/disable command
+- `FAULT_ADC_UNCONFIGURED (10)`: ADC validation not configured
+- `FAULT_TIMEOUT_VSS (11)`: Vehicle speed signal timeout (differential mode)
+
+## Quick Start Example
+
+### Differential Mode Setup
+1. Set System Config: `mode=1`, `can_out_en=1`, `iwdg_en=0`
+2. Configure ADC0: `adc1=2048` (center), `adc_tolerance=100`, `adc_en=1`
+3. Configure ADC1: `adc1=2048` (center), `adc_tolerance=100`, `adc_en=1`
+4. Send speed messages to 0x76 at 8Hz (required for operation)
+5. Test with CAN messages to 0x300
+6. Enable watchdog: `iwdg_en=1`
+
+### Gas Pedal Mode Setup
+1. Set System Config: `mode=2`, `can_out_en=1`, `iwdg_en=0`
+2. Configure ADC0: `adc1=4000` (max), `adc2=200` (min), `adc_tolerance=50`, `adc_en=1`
+3. Configure ADC1: `adc1=4000` (max), `adc2=200` (min), `adc_tolerance=50`, `adc_en=1`
+4. Test with CAN messages to 0x200
+5. Enable watchdog: `iwdg_en=1`

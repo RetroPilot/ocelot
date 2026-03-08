@@ -123,7 +123,7 @@ def print_config_entries(entries):
     cfg_type = e.get("cfg_type", "N/A")
 
     if cfg_type == "CAN":
-      print(f"[{idx}] CAN: ID=0x{e['can_id']:X}, sig_type={e['sig_type']}, shift={e['shift_amt']}, len={e['sig_len']} bits, endian={e['endian_type']}, mult={e['scale_mult']}, offs={e['scale_offs']}, enabled={e['enabled']} is_signed={e['is_signed']}")
+      print(f"[{idx}] CAN: ID=0x{e['can_id']:X}, sig_type={e['sig_type']}, shift={e['shift_amt']}, len={e['sig_len']} bits, endian={e['endian_type']}, factor={e['scale_factor']}, offset={e['scale_offset']}, enabled={e['enabled']} is_signed={e['is_signed']}")
     elif cfg_type == "ADC":
       print(f"[{idx}] ADC: adc1={e['adc1']}, adc2={e['adc2']}, tol={e['adc_tolerance']}, chan={e['adc_num']}, en={e['adc_en']}")
     elif cfg_type == "SYSTEM":
@@ -255,8 +255,8 @@ if __name__ == "__main__":
       if config_type == "CAN":
         print("Enter CAN config values:")
         can_id = int(input("can_id (decimal or 0xHEX): ").strip(), 0)
-        scale_offs = int(input("scale_offs: ").strip())
-        scale_mult = int(input("scale_mult: ").strip())
+        scale_factor = float(input("scale_factor: ").strip())
+        scale_offset = float(input("scale_offset: ").strip())
         msg_len_bytes = int(input("msg_len_bytes: ").strip())
         sig_type = int(input("sig_type: ").strip())
         shift_amt = int(input("shift_amt: ").strip())
@@ -264,7 +264,7 @@ if __name__ == "__main__":
         endian_type = int(input("endian_type: ").strip())
         enabled = int(input("enabled: ").strip())
         is_signed = int(input("is_signed: ").strip())
-        panda.flash_config_write_CAN(flash_index, can_id, scale_offs, scale_mult,
+        panda.flash_config_write_CAN(flash_index, can_id, scale_factor, scale_offset,
                                     msg_len_bytes, sig_type, shift_amt, sig_len,
                                     endian_type, enabled, is_signed)
         print(f"{GREEN}CAN config written.")
